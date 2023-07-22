@@ -1,0 +1,41 @@
+{
+  "name": "solidity-analyzer-language-client",
+  "description": "VSCode part of a language server",
+  "license": "MIT",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.65.0"
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "properties": {
+        "solidity-analyzer-ls.trace.server": {
+          "default": "verbose"
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "extension.helloworld",
+        "title": "Hello World"
+      }
+    ]
+  },
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "dependencies": {
+    "vscode-languageclient": "^8.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^17.0.18",
+    "@types/vscode": "~1.65.0",
+    "vscode-test": "^1.3.0"
+  }
+}
