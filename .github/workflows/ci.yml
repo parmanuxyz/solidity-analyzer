@@ -1,0 +1,26 @@
+name: Rust Build and Test
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  build-and-test:
+    name: Build and Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+          override: true
+
+      - name: Build and Test
+        run: |
+          cargo build --verbose
+          cargo test --verbose
