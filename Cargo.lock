@@ -2370,6 +2370,7 @@ name = "solidity-analyzer"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "dashmap",
  "ethers-solc 2.0.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "forge-fmt",
  "foundry-config",

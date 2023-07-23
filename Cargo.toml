@@ -14,3 +14,4 @@ forge-fmt = { git = "https://github.com/meetmangukiya/foundry", version = "0.2.0
 anyhow = "1.0.72"
 similar = "2.2.1"
 thiserror = "1.0.44"
+dashmap = "5.5.0"

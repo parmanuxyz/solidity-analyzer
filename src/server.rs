@@ -1,3 +1,4 @@
+use crate::append_to_file;
 use crate::backend::Backend;
 
 use tower_lsp::jsonrpc::{Error, ErrorCode, Result};
@@ -6,10 +7,22 @@ use tower_lsp::LanguageServer;
 
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
-    async fn initialize(&self, _: InitializeParams) -> Result<InitializeResult> {
+    async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
+        self.client_capabilities
+            .set(params.capabilities)
+            .map_err(|_| Error::new(ErrorCode::InternalError))?;
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 document_formatting_provider: Some(OneOf::Left(true)),
+                text_document_sync: Some(TextDocumentSyncCapability::Options(
+                    TextDocumentSyncOptions {
+                        open_close: Some(true),
+                        // TODO: maybe incremental would be better for perf
+                        // Keeping it simple for now though
+                        change: Some(TextDocumentSyncKind::FULL),
+                        ..Default::default()
+                    },
+                )),
                 ..Default::default()
             },
             ..Default::default()
@@ -20,6 +33,61 @@ impl LanguageServer for Backend {
         self.client
             .log_message(MessageType::INFO, "server initialized!")
             .await;
+    }
+
+    async fn did_open(&self, params: DidOpenTextDocumentParams) {
+        let file_path: Url = params.text_document.uri;
+        append_to_file!(
+            "/Users/meet/solidity-analyzer.log",
+            "did_open request for {file_path} and {:?}",
+            params.text_document.language_id
+        );
+        let text = params.text_document.text;
+        self.client
+            .log_message(
+                MessageType::INFO,
+                format!("did_open request for {file_path}"),
+            )
+            .await;
+        self.add_file(&file_path, text);
+    }
+
+    async fn did_change(&self, params: DidChangeTextDocumentParams) {
+        let file_path: Url = params.text_document.uri;
+        append_to_file!(
+            "/Users/meet/solidity-analyzer.log",
+            "did_change request for {file_path}: {:#?}",
+            params.content_changes
+        );
+
+        for content_change in params.content_changes {
+            match content_change.range {
+                Some(range) => {
+                    self.update_file_range(&file_path, range, content_change.text);
+                }
+                None => {
+                    self.update_file(&file_path, content_change.text);
+                }
+            }
+        }
+
+        self.client
+            .log_message(
+                MessageType::INFO,
+                format!("did_change request for {file_path}"),
+            )
+            .await;
+    }
+
+    async fn did_close(&self, params: DidCloseTextDocumentParams) {
+        let file_path: Url = params.text_document.uri;
+        self.client
+            .log_message(
+                MessageType::INFO,
+                format!("did_close request for {file_path}"),
+            )
+            .await;
+        self.remove_file(&file_path);
     }
 
     async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
