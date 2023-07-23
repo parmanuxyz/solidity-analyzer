@@ -20,6 +20,9 @@ jobs:
           toolchain: nightly
           override: true
 
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
       - name: Build and Test
         run: |
           cargo build
