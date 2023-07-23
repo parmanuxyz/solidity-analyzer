@@ -12,7 +12,7 @@ use tower_lsp::{
     Client,
 };
 
-use crate::{utils};
+use crate::utils;
 
 #[derive(Debug)]
 pub struct Backend {
