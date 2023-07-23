@@ -67,6 +67,6 @@ mod tests {
 
         let url = Url::parse("https:///home/user/file.txt").unwrap();
         let path = url_to_path(&url).err().unwrap();
-        assert_eq!(matches!(path, BackendError::UnprocessableUrlError), true);
+        assert!(matches!(path, BackendError::UnprocessableUrlError));
     }
 }
