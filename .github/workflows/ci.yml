@@ -38,8 +38,8 @@ jobs:
 
       - name: Build and Test
         run: |
-          cargo build
-          cargo test
+          cargo build --all-targets --all-features
+          cargo test --all-targets --all-features -- --show-output
 
   build-and-test-extension:
     name: Build and Test Extension

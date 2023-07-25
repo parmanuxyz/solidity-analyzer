@@ -123,11 +123,23 @@ impl LanguageServer for Backend {
     ) -> Result<Option<DocumentSymbolResponse>> {
         let file_path: Url = params.text_document.uri;
         self.update_document_symbols(&file_path).await;
-        self.document_symbols
-            .get(file_path.as_str())
-            .map_or(Err(Error::new(ErrorCode::InternalError)), |symbols| {
+        self.document_symbols.get(file_path.as_str()).map_or(
+            Err(Error::new(ErrorCode::InternalError)),
+            |symbols| {
+                // symbols
+                //     .iter()
+                //     .map(|sym| {
+                //         append_to_file!(
+                //             "/Users/meet/solidity-analyzer.log",
+                //             "document_symbol request for {file_path}: {:#?}",
+                //             sym
+                //         );
+                //     })
+                //     .collect::<Vec<()>>();
+
                 Ok(Some(DocumentSymbolResponse::Nested(symbols.clone())))
-            })
+            },
+        )
     }
 
     async fn shutdown(&self) -> Result<()> {
