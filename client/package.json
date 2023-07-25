@@ -7,7 +7,7 @@
     "vscode": "^1.65.0"
   },
   "scripts": {
-    "vscode:prepublish": "pnpm compile",
+    "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./"
   },

@@ -56,32 +56,11 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v1
         with:
-          cache: pnpm
-          cache-dependency-path: client/pnpm-lock.yaml
+          cache: yarn
+          cache-dependency-path: client/yarn.lock
           node-version: 18
-
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v2
-        with:
-          version: 8
-          run_install: |
-            - recursive: true
-              args: [--frozen-lockfile, --strict-peer-dependencies]
-
-      - name: Get pnpm store directory
-        id: pnpm-cache
-        shell: bash
-        run: |
-          echo "STORE_PATH=$(pnpm store path)" >> $GITHUB_OUTPUT
-
-      - uses: actions/cache@v3
-        name: Setup pnpm cache
-        with:
-          path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-store-
 
       - name: Build and Test
         run: |
-          pnpm exec vsce package
+          yarn install
+          yarn vsce package
