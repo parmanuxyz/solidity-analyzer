@@ -54,6 +54,9 @@ jobs:
           cache: pnpm
           cache-dependency-path: client/pnpm-lock.yaml
 
+      - name: Set up pnpm
+        - uses: pnpm/action-setup@v2
+
       - name: Install dependencies
         run: pnpm i
 
