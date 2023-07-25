@@ -45,6 +45,9 @@ jobs:
     name: Build and Test Extension
     runs-on: ubuntu-latest
 
+    defaults:
+      working-directory: client
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v2
