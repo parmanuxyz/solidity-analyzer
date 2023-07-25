@@ -81,5 +81,6 @@ jobs:
 
       - name: Build and Test
         run: |
+          pnpm install
           pnpm install --dev
           pnpm exec vsce package
