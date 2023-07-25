@@ -1,5 +1,8 @@
 # solidity-analyzer
 
+Goal is to create and provide improved devex over current extensions
+for foundry projects with maybe hardhat support(through foundry) in future.
+
 ## Features
 
 - [x] Formatting (with foundry, same as `forge fmt` while respecting configs)
