@@ -7,17 +7,40 @@ use tower_lsp::lsp_types::{DocumentSymbol, Range, SymbolKind, SymbolTag};
 use crate::append_to_file;
 use crate::backend::Source;
 
-pub trait ToDocumentSymbol {
+pub trait ToDocumentSymbol: CodeLocation {
     fn to_document_symbol(&self, source: &Source) -> DocumentSymbol;
     fn try_to_document_symbol(&self, source: &Source) -> Option<DocumentSymbol> {
         Some(self.to_document_symbol(source))
+    }
+    fn with_loc(&self, source: &Source, document_symbol: DocumentSymbol) -> DocumentSymbol {
+        let loc = self.loc();
+        if let Ok(range) = source.loc_to_range(&loc) {
+            DocumentSymbol {
+                range,
+                selection_range: range,
+                ..document_symbol
+            }
+        } else {
+            document_symbol
+        }
+    }
+    fn to_document_symbol_with_loc(&self, source: &Source) -> DocumentSymbol {
+        self.with_loc(source, self.to_document_symbol(source))
+    }
+    fn try_to_document_symbol_with_loc(&self, source: &Source) -> Option<DocumentSymbol> {
+        self.try_to_document_symbol(source)
+            .map(|document_symbol| self.with_loc(source, document_symbol))
     }
 }
 
 impl ToDocumentSymbol for Identifier {
     fn to_document_symbol(&self, source: &Source) -> DocumentSymbol {
         let mut range = Range::default();
-        append_to_file!("/Users/meet/solidity-analyzer.log", "loc: {:?}", self.loc);
+        append_to_file!(
+            "/Users/meet/solidity-analyzer.log",
+            "to_document_symbol: {:?}",
+            self
+        );
         if matches!(self.loc, Loc::File(_, _, _)) {
             if let Ok(range_) = source.loc_to_range(&self.loc) {
                 range = range_;
@@ -41,7 +64,10 @@ impl ToDocumentSymbol for EnumDefinition {
                     .map(|enum_value| DocumentSymbol {
                         kind: SymbolKind::ENUM_MEMBER,
                         // okay to unwrap because filtered Nones
-                        ..enum_value.as_ref().unwrap().to_document_symbol(source)
+                        ..enum_value
+                            .as_ref()
+                            .unwrap()
+                            .to_document_symbol_with_loc(source)
                     })
                     .collect::<Vec<DocumentSymbol>>(),
             )
@@ -83,7 +109,7 @@ impl ToDocumentSymbol for StructDefinition {
                     .iter()
                     .map(|field| DocumentSymbol {
                         kind: SymbolKind::FIELD,
-                        ..field.to_document_symbol(source)
+                        ..field.to_document_symbol_with_loc(source)
                     })
                     .collect::<Vec<DocumentSymbol>>(),
             )
@@ -142,27 +168,27 @@ impl ToDocumentSymbol for ContractPart {
     fn try_to_document_symbol(&self, source: &Source) -> Option<DocumentSymbol> {
         match self {
             Self::StructDefinition(struct_definition) => {
-                Some(struct_definition.to_document_symbol(source))
+                Some(struct_definition.to_document_symbol_with_loc(source))
             }
             Self::EnumDefinition(enum_definition) => {
-                Some(enum_definition.to_document_symbol(source))
+                Some(enum_definition.to_document_symbol_with_loc(source))
             }
             Self::EventDefinition(event_definition) => {
-                Some(event_definition.to_document_symbol(source))
+                Some(event_definition.to_document_symbol_with_loc(source))
             }
             Self::ErrorDefinition(error_definition) => {
-                Some(error_definition.to_document_symbol(source))
+                Some(error_definition.to_document_symbol_with_loc(source))
             }
             Self::FunctionDefinition(func_definition) => Some(DocumentSymbol {
                 kind: SymbolKind::METHOD,
-                ..func_definition.to_document_symbol(source)
+                ..func_definition.to_document_symbol_with_loc(source)
             }),
             Self::VariableDefinition(variable_definition) => Some(DocumentSymbol {
                 kind: SymbolKind::PROPERTY,
-                ..variable_definition.to_document_symbol(source)
+                ..variable_definition.to_document_symbol_with_loc(source)
             }),
             Self::TypeDefinition(type_definition) => {
-                Some(type_definition.to_document_symbol(source))
+                Some(type_definition.to_document_symbol_with_loc(source))
             }
             _ => None,
         }

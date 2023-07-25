@@ -274,28 +274,28 @@ impl Backend {
             .iter()
             .filter_map(|part| match part {
                 SourceUnitPart::ContractDefinition(contract) => {
-                    Some(contract.to_document_symbol(&source))
+                    Some(contract.to_document_symbol_with_loc(&source))
                 }
                 SourceUnitPart::EnumDefinition(enum_definition) => {
-                    Some(enum_definition.to_document_symbol(&source))
+                    Some(enum_definition.to_document_symbol_with_loc(&source))
                 }
                 SourceUnitPart::StructDefinition(struct_definition) => {
-                    Some(struct_definition.to_document_symbol(&source))
+                    Some(struct_definition.to_document_symbol_with_loc(&source))
                 }
                 SourceUnitPart::EventDefinition(event_definition) => {
-                    Some(event_definition.to_document_symbol(&source))
+                    Some(event_definition.to_document_symbol_with_loc(&source))
                 }
                 SourceUnitPart::ErrorDefinition(error_definition) => {
-                    Some(error_definition.to_document_symbol(&source))
+                    Some(error_definition.to_document_symbol_with_loc(&source))
                 }
                 SourceUnitPart::FunctionDefinition(func_definition) => {
-                    Some(func_definition.to_document_symbol(&source))
+                    Some(func_definition.to_document_symbol_with_loc(&source))
                 }
                 SourceUnitPart::VariableDefinition(variable_definition) => {
-                    Some(variable_definition.to_document_symbol(&source))
+                    Some(variable_definition.to_document_symbol_with_loc(&source))
                 }
                 SourceUnitPart::TypeDefinition(type_definition) => {
-                    Some(type_definition.to_document_symbol(&source))
+                    Some(type_definition.to_document_symbol_with_loc(&source))
                 }
                 _ => None,
             })
@@ -478,21 +478,18 @@ mod tests {
             };
 
             for part in &tree.0 {
-                match part {
-                    SourceUnitPart::ContractDefinition(def) => {
-                        for part in &def.parts {
-                            match part {
-                                ContractPart::VariableDefinition(def) => {
-                                    verify_loc_to_range(&def.loc);
-                                }
-                                ContractPart::FunctionDefinition(def) => {
-                                    verify_loc_to_range(&def.loc);
-                                }
-                                _ => (),
+                if let SourceUnitPart::ContractDefinition(def) = part {
+                    for part in &def.parts {
+                        match part {
+                            ContractPart::VariableDefinition(def) => {
+                                verify_loc_to_range(&def.loc);
                             }
+                            ContractPart::FunctionDefinition(def) => {
+                                verify_loc_to_range(&def.loc);
+                            }
+                            _ => (),
                         }
                     }
-                    _ => (),
                 }
             }
         }
