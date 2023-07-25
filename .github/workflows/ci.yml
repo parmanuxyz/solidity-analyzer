@@ -54,6 +54,7 @@ jobs:
         with:
           cache: pnpm
           cache-dependency-path: client/pnpm-lock.yaml
+          version: latest
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v2
