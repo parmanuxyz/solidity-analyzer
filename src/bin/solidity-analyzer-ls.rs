@@ -10,6 +10,7 @@ async fn main() {
         client,
         documents: Default::default(),
         client_capabilities: Default::default(),
+        document_symbols: Default::default(),
     });
     Server::new(stdin, stdout, socket).serve(service).await;
 }

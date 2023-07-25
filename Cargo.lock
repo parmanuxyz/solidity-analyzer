@@ -2375,6 +2375,7 @@ dependencies = [
  "forge-fmt",
  "foundry-config",
  "similar",
+ "solang-parser",
  "thiserror",
  "tokio",
  "tower-lsp",
