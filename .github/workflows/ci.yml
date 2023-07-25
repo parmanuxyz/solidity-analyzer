@@ -40,6 +40,7 @@ jobs:
         run: |
           cargo build
           cargo test
+
   build-and-test-extension:
     name: Build and Test Extension
     runs-on: ubuntu-latest
@@ -55,7 +56,7 @@ jobs:
           cache-dependency-path: client/pnpm-lock.yaml
 
       - name: Set up pnpm
-        - uses: pnpm/action-setup@v2
+        uses: pnpm/action-setup@v2
 
       - name: Install dependencies
         run: pnpm i
