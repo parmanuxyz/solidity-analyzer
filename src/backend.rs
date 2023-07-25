@@ -23,6 +23,7 @@ pub struct Backend {
     pub documents: DashMap<String, String>,
     pub client_capabilities: OnceLock<ClientCapabilities>,
     pub document_symbols: DashMap<String, Vec<DocumentSymbol>>,
+    pub document_diagnostics: DashMap<String, Vec<solang_parser::diagnostics::Diagnostic>>,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -166,38 +167,84 @@ impl Backend {
         Ok(String::from_utf8_lossy(&buf).into_owned())
     }
 
-    pub fn add_file(&self, file_path: &Url, file_contents: String) {
+    pub async fn add_file(&self, file_path: &Url, file_contents: String) {
         self.documents.insert(file_path.to_string(), file_contents);
-        self.on_file_change(FileAction::Open, file_path);
+        self.on_file_change(FileAction::Open, file_path).await;
     }
 
-    pub fn remove_file(&self, file_path: &Url) {
+    pub async fn remove_file(&self, file_path: &Url) {
         self.documents.remove(&file_path.to_string());
-        self.on_file_change(FileAction::Close, file_path);
+        self.on_file_change(FileAction::Close, file_path).await;
     }
 
-    pub fn update_file(&self, file_path: &Url, file_contents: String) {
+    pub async fn update_file(&self, file_path: &Url, file_contents: String) {
         self.documents.insert(file_path.to_string(), file_contents);
-        self.on_file_change(FileAction::Update, file_path);
+        self.on_file_change(FileAction::Update, file_path).await;
     }
 
     pub fn update_file_range(&self, _file_path: &Url, _range: Range, _text: String) {
         unimplemented!("update_file_range")
     }
 
-    fn on_file_change(&self, action: FileAction, path: &Url) {
+    async fn on_file_change(&self, action: FileAction, path: &Url) {
         match action {
             FileAction::Close => {
                 self.document_symbols.remove(&path.to_string());
+                self.document_diagnostics.remove(&path.to_string());
             }
-            _ => self.update_document_symbols(path),
+            _ => {
+                self.update_document_symbols(path).await;
+            }
         }
     }
 
-    pub fn update_document_symbols(&self, path: &Url) {
+    pub async fn update_document_symbols(&self, path: &Url) -> bool {
         if let Ok(symbols) = self.get_document_symbols(path) {
             self.document_symbols.insert(path.to_string(), symbols);
         }
+
+        match self.get_document_symbols(path) {
+            Ok(symbols) => {
+                self.document_symbols.insert(path.to_string(), symbols);
+                self.document_diagnostics.remove(&path.to_string());
+                self.on_document_diagnostic_update(path).await;
+                true
+            }
+            Err(error) => {
+                if let BackendError::SolidityParseError(diagnostics) = error {
+                    self.document_diagnostics
+                        .insert(path.to_string(), diagnostics);
+                    self.on_document_diagnostic_update(path).await
+                }
+                false
+            }
+        }
+    }
+
+    async fn on_document_diagnostic_update(&self, _path: &Url) {
+        // if let Some(diagnostics) = self.document_diagnostics.get(&path.to_string()) {
+        // let diags = diagnostics
+        //     .iter()
+        //     .map(|diagnostic| {
+        //         // let range = diagnostic.range.clone();
+        //         tower_lsp::lsp_types::Diagnostic {
+        //             range: Default::default(),
+        //             severity: Some(tower_lsp::lsp_types::DiagnosticSeverity::ERROR),
+        //             code: None,
+        //             code_description: None,
+        //             source: Some("solang".to_string()),
+        //             message: diagnostic.message.clone(),
+        //             related_information: None,
+        //             tags: None,
+        //             data: None,
+        //         }
+        //     })
+        //     .collect();
+
+        // self.client
+        //     .publish_diagnostics(path.clone(), diags, None)
+        //     .await;
+        // }
     }
 
     pub fn get_document_symbols(

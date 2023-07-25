@@ -11,6 +11,7 @@ impl LanguageServer for Backend {
         self.client_capabilities
             .set(params.capabilities)
             .map_err(|_| Error::new(ErrorCode::InternalError))?;
+
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 document_formatting_provider: Some(OneOf::Left(true)),
@@ -50,7 +51,7 @@ impl LanguageServer for Backend {
                 format!("did_open request for {file_path}"),
             )
             .await;
-        self.add_file(&file_path, text);
+        self.add_file(&file_path, text).await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
@@ -67,7 +68,7 @@ impl LanguageServer for Backend {
                     self.update_file_range(&file_path, range, content_change.text);
                 }
                 None => {
-                    self.update_file(&file_path, content_change.text);
+                    self.update_file(&file_path, content_change.text).await;
                 }
             }
         }
@@ -88,7 +89,7 @@ impl LanguageServer for Backend {
                 format!("did_close request for {file_path}"),
             )
             .await;
-        self.remove_file(&file_path);
+        self.remove_file(&file_path).await;
     }
 
     async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
@@ -121,7 +122,7 @@ impl LanguageServer for Backend {
         params: DocumentSymbolParams,
     ) -> Result<Option<DocumentSymbolResponse>> {
         let file_path: Url = params.text_document.uri;
-        self.update_document_symbols(&file_path);
+        self.update_document_symbols(&file_path).await;
         self.document_symbols
             .get(file_path.as_str())
             .map_or(Err(Error::new(ErrorCode::InternalError)), |symbols| {
