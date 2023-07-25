@@ -46,7 +46,8 @@ jobs:
     runs-on: ubuntu-latest
 
     defaults:
-      working-directory: client
+      run:
+        working-directory: client
 
     steps:
       - name: Checkout repository
