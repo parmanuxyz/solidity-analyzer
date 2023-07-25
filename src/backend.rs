@@ -10,10 +10,7 @@ use dashmap::DashMap;
 use similar::{DiffOp, TextDiff};
 use solang_parser::pt::SourceUnitPart;
 use tower_lsp::{
-    lsp_types::{
-        lsif::Document, ClientCapabilities, DocumentSymbol, Position, Range, SymbolKind, TextEdit,
-        Url,
-    },
+    lsp_types::{ClientCapabilities, DocumentSymbol, Position, Range, TextEdit, Url},
     Client,
 };
 
@@ -198,9 +195,9 @@ impl Backend {
     }
 
     pub fn update_document_symbols(&self, path: &Url) {
-        self.get_document_symbols(path).ok().map(|symbols| {
+        if let Ok(symbols) = self.get_document_symbols(path) {
             self.document_symbols.insert(path.to_string(), symbols);
-        });
+        }
     }
 
     pub fn get_document_symbols(
@@ -210,13 +207,13 @@ impl Backend {
         let file_contents = self
             .read_file(file_path.clone())
             .map_err(|_| BackendError::ReadError)?;
-        let (source_unit, _comments) = solang_parser::parse(&file_contents, 0)
-            .map_err(|diagnostics| BackendError::SolidityParseError(diagnostics))?;
+        let (source_unit, _comments) =
+            solang_parser::parse(&file_contents, 0).map_err(BackendError::SolidityParseError)?;
 
         Ok(source_unit
             .0
             .iter()
-            .map(|part| match part {
+            .filter_map(|part| match part {
                 SourceUnitPart::ContractDefinition(contract) => Some(contract.to_document_symbol()),
                 SourceUnitPart::EnumDefinition(enum_definition) => {
                     Some(enum_definition.to_document_symbol())
@@ -241,8 +238,6 @@ impl Backend {
                 }
                 _ => None,
             })
-            .filter(|x| x.is_some())
-            .map(|x| x.unwrap())
             .collect())
     }
 }
