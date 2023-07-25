@@ -50,7 +50,7 @@ impl ToDocumentSymbol for EnumDefinition {
 }
 
 impl ToDocumentSymbol for VariableDefinition {
-    fn to_document_symbol(&self, source: &Source) -> DocumentSymbol {
+    fn to_document_symbol(&self, _source: &Source) -> DocumentSymbol {
         let mut builder =
             DocumentSymbolBuilder::new_with_identifier(&self.name, "<var>", SymbolKind::VARIABLE);
 
@@ -63,7 +63,7 @@ impl ToDocumentSymbol for VariableDefinition {
 }
 
 impl ToDocumentSymbol for VariableDeclaration {
-    fn to_document_symbol(&self, source: &Source) -> DocumentSymbol {
+    fn to_document_symbol(&self, _source: &Source) -> DocumentSymbol {
         let mut builder =
             DocumentSymbolBuilder::new_with_identifier(&self.name, "<var>", SymbolKind::VARIABLE);
 
@@ -92,14 +92,14 @@ impl ToDocumentSymbol for StructDefinition {
 }
 
 impl ToDocumentSymbol for FunctionDefinition {
-    fn to_document_symbol(&self, source: &Source) -> DocumentSymbol {
+    fn to_document_symbol(&self, _source: &Source) -> DocumentSymbol {
         DocumentSymbolBuilder::new_with_identifier(&self.name, "<function>", SymbolKind::FUNCTION)
             .build()
     }
 }
 
 impl ToDocumentSymbol for ErrorDefinition {
-    fn to_document_symbol(&self, source: &Source) -> DocumentSymbol {
+    fn to_document_symbol(&self, _source: &Source) -> DocumentSymbol {
         DocumentSymbolBuilder::new(
             format!(
                 "error {}",
@@ -114,7 +114,7 @@ impl ToDocumentSymbol for ErrorDefinition {
 }
 
 impl ToDocumentSymbol for EventDefinition {
-    fn to_document_symbol(&self, source: &Source) -> DocumentSymbol {
+    fn to_document_symbol(&self, _source: &Source) -> DocumentSymbol {
         DocumentSymbolBuilder::new(
             format!(
                 "event {}",
@@ -129,13 +129,13 @@ impl ToDocumentSymbol for EventDefinition {
 }
 
 impl ToDocumentSymbol for TypeDefinition {
-    fn to_document_symbol(&self, source: &Source) -> DocumentSymbol {
+    fn to_document_symbol(&self, _source: &Source) -> DocumentSymbol {
         DocumentSymbolBuilder::new(format!("type {}", self.name.name), SymbolKind::OBJECT).build()
     }
 }
 
 impl ToDocumentSymbol for ContractPart {
-    fn to_document_symbol(&self, source: &Source) -> DocumentSymbol {
+    fn to_document_symbol(&self, _source: &Source) -> DocumentSymbol {
         unimplemented!()
     }
 
