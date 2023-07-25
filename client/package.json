@@ -6,6 +6,9 @@
   "engines": {
     "vscode": "^1.65.0"
   },
+  "repository": {
+    "url": "https://github.com/parmanuxyz/solidity-analyzer"
+  },
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
