@@ -160,10 +160,7 @@ impl ToDocumentSymbol for ContractDefinition {
             .children(
                 self.parts
                     .iter()
-                    .map(|part| part.try_to_document_symbol())
-                    .filter(|x| x.is_some())
-                    // okay to unwrap because filtered Nones
-                    .map(|x| x.unwrap())
+                    .filter_map(|part| part.try_to_document_symbol())
                     .collect(),
             )
             .build()
@@ -173,6 +170,7 @@ impl ToDocumentSymbol for ContractDefinition {
 struct DocumentSymbolBuilder(DocumentSymbol);
 
 impl DocumentSymbolBuilder {
+    #[allow(deprecated)]
     fn new_with_identifier(
         name: &Option<Identifier>,
         default_name: &str,
@@ -192,6 +190,7 @@ impl DocumentSymbolBuilder {
         })
     }
 
+    #[allow(deprecated)]
     fn new(name: String, kind: SymbolKind) -> Self {
         Self(DocumentSymbol {
             name,
@@ -205,11 +204,13 @@ impl DocumentSymbolBuilder {
         })
     }
 
+    #[allow(dead_code)]
     fn name(&mut self, name: String) -> &mut Self {
         self.0.name = name;
         self
     }
 
+    #[allow(dead_code)]
     fn kind(&mut self, kind: SymbolKind) -> &mut Self {
         self.0.kind = kind;
         self
@@ -220,21 +221,26 @@ impl DocumentSymbolBuilder {
         self
     }
 
+    #[allow(dead_code)]
     fn tags(&mut self, tags: Vec<SymbolTag>) -> &mut Self {
         self.0.tags = Some(tags);
         self
     }
 
+    #[allow(dead_code)]
+    #[allow(deprecated)]
     fn deprecated(&mut self, deprecated: bool) -> &mut Self {
         self.0.deprecated = Some(deprecated);
         self
     }
 
+    #[allow(dead_code)]
     fn range(&mut self, range: Range) -> &mut Self {
         self.0.range = range;
         self
     }
 
+    #[allow(dead_code)]
     fn selection_range(&mut self, selection_range: Range) -> &mut Self {
         self.0.selection_range = selection_range;
         self
