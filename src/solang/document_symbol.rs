@@ -25,7 +25,7 @@ impl ToDocumentSymbol for Identifier {
         }
 
         DocumentSymbolBuilder::new(self.name.clone(), SymbolKind::VARIABLE)
-            .range(range.clone())
+            .range(range)
             .selection_range(range)
             .build()
     }
