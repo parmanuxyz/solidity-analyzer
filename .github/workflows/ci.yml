@@ -57,8 +57,8 @@ jobs:
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v2
-        working-directory: client
         with:
+          version: 8
           run_install: |
             cwd: client
             dest: client
