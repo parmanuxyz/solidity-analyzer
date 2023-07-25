@@ -395,7 +395,7 @@ mod tests {
     use super::*;
     use solang_parser::pt::*;
 
-    mod SourceTests {
+    mod source_tests {
         use super::*;
 
         #[test]
