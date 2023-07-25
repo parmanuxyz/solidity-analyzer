@@ -60,6 +60,7 @@ jobs:
         with:
           run_install: |
             cwd: client
+            dest: client
 
       - name: Get pnpm store directory
         id: pnpm-cache
