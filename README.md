@@ -2,9 +2,9 @@
 
 ## Features
 
-- [x] Formatting
+- [x] Formatting (with foundry, same as `forge fmt` while respecting configs)
 - [ ] Diagnostics
-- [ ] Outline
+- [x] Outline (could add more details)
 
 ## Language Server
 
