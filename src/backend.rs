@@ -1,4 +1,5 @@
 use std::{
+    fmt::Debug,
     fs::{metadata, File},
     io::Read,
     os::unix::prelude::MetadataExt,
@@ -7,11 +8,16 @@ use std::{
 
 use dashmap::DashMap;
 use similar::{DiffOp, TextDiff};
+use solang_parser::pt::SourceUnitPart;
 use tower_lsp::{
-    lsp_types::{ClientCapabilities, Position, Range, TextEdit, Url},
+    lsp_types::{
+        lsif::Document, ClientCapabilities, DocumentSymbol, Position, Range, SymbolKind, TextEdit,
+        Url,
+    },
     Client,
 };
 
+use crate::solang::document_symbol::ToDocumentSymbol;
 use crate::utils;
 
 #[derive(Debug)]
@@ -19,6 +25,7 @@ pub struct Backend {
     pub client: Client,
     pub documents: DashMap<String, String>,
     pub client_capabilities: OnceLock<ClientCapabilities>,
+    pub document_symbols: DashMap<String, Vec<DocumentSymbol>>,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -31,6 +38,14 @@ pub enum BackendError {
     ReadError,
     #[error("Unprocessable url error")]
     UnprocessableUrlError,
+    #[error("Solidity parse error")]
+    SolidityParseError(Vec<solang_parser::diagnostics::Diagnostic>),
+}
+
+enum FileAction {
+    Open,
+    Update,
+    Close,
 }
 
 impl Backend {
@@ -61,6 +76,12 @@ impl Backend {
         forge_fmt::format(&mut formatted_txt, parsed_src, config.fmt)
             .map_err(|_| BackendError::FormatError)?;
         let formatted_txt_lines = formatted_txt.lines().collect::<Vec<&str>>();
+
+        // crate::append_to_file!(
+        //     "/Users/meet/solidity-analyzer.log",
+        //     "formatted_txt: {:?}",
+        //     formatted_txt
+        // );
 
         let diff: TextDiff<'_, '_, '_, str> = TextDiff::from_lines(&file_contents, &formatted_txt);
         let text_edits = diff
@@ -150,17 +171,78 @@ impl Backend {
 
     pub fn add_file(&self, file_path: &Url, file_contents: String) {
         self.documents.insert(file_path.to_string(), file_contents);
+        self.on_file_change(FileAction::Open, file_path);
     }
 
     pub fn remove_file(&self, file_path: &Url) {
         self.documents.remove(&file_path.to_string());
+        self.on_file_change(FileAction::Close, file_path);
     }
 
     pub fn update_file(&self, file_path: &Url, file_contents: String) {
         self.documents.insert(file_path.to_string(), file_contents);
+        self.on_file_change(FileAction::Update, file_path);
     }
 
     pub fn update_file_range(&self, _file_path: &Url, _range: Range, _text: String) {
         unimplemented!("update_file_range")
+    }
+
+    fn on_file_change(&self, action: FileAction, path: &Url) {
+        match action {
+            FileAction::Close => {
+                self.document_symbols.remove(&path.to_string());
+            }
+            _ => self.update_document_symbols(path),
+        }
+    }
+
+    pub fn update_document_symbols(&self, path: &Url) {
+        self.get_document_symbols(path).ok().map(|symbols| {
+            self.document_symbols.insert(path.to_string(), symbols);
+        });
+    }
+
+    pub fn get_document_symbols(
+        &self,
+        file_path: &Url,
+    ) -> Result<Vec<DocumentSymbol>, BackendError> {
+        let file_contents = self
+            .read_file(file_path.clone())
+            .map_err(|_| BackendError::ReadError)?;
+        let (source_unit, _comments) = solang_parser::parse(&file_contents, 0)
+            .map_err(|diagnostics| BackendError::SolidityParseError(diagnostics))?;
+
+        Ok(source_unit
+            .0
+            .iter()
+            .map(|part| match part {
+                SourceUnitPart::ContractDefinition(contract) => Some(contract.to_document_symbol()),
+                SourceUnitPart::EnumDefinition(enum_definition) => {
+                    Some(enum_definition.to_document_symbol())
+                }
+                SourceUnitPart::StructDefinition(struct_definition) => {
+                    Some(struct_definition.to_document_symbol())
+                }
+                SourceUnitPart::EventDefinition(event_definition) => {
+                    Some(event_definition.to_document_symbol())
+                }
+                SourceUnitPart::ErrorDefinition(error_definition) => {
+                    Some(error_definition.to_document_symbol())
+                }
+                SourceUnitPart::FunctionDefinition(func_definition) => {
+                    Some(func_definition.to_document_symbol())
+                }
+                SourceUnitPart::VariableDefinition(variable_definition) => {
+                    Some(variable_definition.to_document_symbol())
+                }
+                SourceUnitPart::TypeDefinition(type_definition) => {
+                    Some(type_definition.to_document_symbol())
+                }
+                _ => None,
+            })
+            .filter(|x| x.is_some())
+            .map(|x| x.unwrap())
+            .collect())
     }
 }

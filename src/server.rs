@@ -23,6 +23,7 @@ impl LanguageServer for Backend {
                         ..Default::default()
                     },
                 )),
+                document_symbol_provider: Some(OneOf::Left(true)),
                 ..Default::default()
             },
             ..Default::default()
@@ -100,7 +101,12 @@ impl LanguageServer for Backend {
             .await;
 
         match self.get_fmt_textedits(file_path).await {
-            Ok(edits) => Ok(edits),
+            Ok(edits) => {
+                self.client
+                    .log_message(MessageType::LOG, format!("edits: {:?}", edits))
+                    .await;
+                Ok(edits)
+            }
             Err(err) => {
                 self.client
                     .log_message(MessageType::ERROR, format!("error on fmt: {:?}", err))
@@ -108,6 +114,19 @@ impl LanguageServer for Backend {
                 Err(Error::new(ErrorCode::InternalError))
             }
         }
+    }
+
+    async fn document_symbol(
+        &self,
+        params: DocumentSymbolParams,
+    ) -> Result<Option<DocumentSymbolResponse>> {
+        let file_path: Url = params.text_document.uri;
+        self.update_document_symbols(&file_path);
+        self.document_symbols
+            .get(file_path.as_str())
+            .map_or(Err(Error::new(ErrorCode::InternalError)), |symbols| {
+                Ok(Some(DocumentSymbolResponse::Nested(symbols.clone())))
+            })
     }
 
     async fn shutdown(&self) -> Result<()> {
