@@ -1,3 +1,4 @@
+#[allow(unused_imports)]
 use crate::append_to_file;
 use crate::backend::Backend;
 
@@ -39,11 +40,11 @@ impl LanguageServer for Backend {
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         let file_path: Url = params.text_document.uri;
-        append_to_file!(
-            "/Users/meet/solidity-analyzer.log",
-            "did_open request for {file_path} and {:?}",
-            params.text_document.language_id
-        );
+        // append_to_file!(
+        //     "/Users/meet/solidity-analyzer.log",
+        //     "did_open request for {file_path} and {:?}",
+        //     params.text_document.language_id
+        // );
         let text = params.text_document.text;
         self.client
             .log_message(
@@ -56,11 +57,11 @@ impl LanguageServer for Backend {
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         let file_path: Url = params.text_document.uri;
-        append_to_file!(
-            "/Users/meet/solidity-analyzer.log",
-            "did_change request for {file_path}: {:#?}",
-            params.content_changes
-        );
+        // append_to_file!(
+        //     "/Users/meet/solidity-analyzer.log",
+        //     "did_change request for {file_path}: {:#?}",
+        //     params.content_changes
+        // );
 
         for content_change in params.content_changes {
             match content_change.range {

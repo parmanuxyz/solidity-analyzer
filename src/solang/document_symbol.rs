@@ -4,6 +4,7 @@ use forge_fmt::solang_ext::pt::TypeDefinition;
 use solang_parser::pt::*;
 use tower_lsp::lsp_types::{DocumentSymbol, Range, SymbolKind, SymbolTag};
 
+#[allow(unused_imports)]
 use crate::append_to_file;
 use crate::backend::Source;
 
@@ -36,11 +37,11 @@ pub trait ToDocumentSymbol: CodeLocation {
 impl ToDocumentSymbol for Identifier {
     fn to_document_symbol(&self, source: &Source) -> DocumentSymbol {
         let mut range = Range::default();
-        append_to_file!(
-            "/Users/meet/solidity-analyzer.log",
-            "to_document_symbol: {:?}",
-            self
-        );
+        // append_to_file!(
+        //     "/Users/meet/solidity-analyzer.log",
+        //     "to_document_symbol: {:?}",
+        //     self
+        // );
         if matches!(self.loc, Loc::File(_, _, _)) {
             if let Ok(range_) = source.loc_to_range(&self.loc) {
                 range = range_;
