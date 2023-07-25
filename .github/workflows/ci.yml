@@ -64,3 +64,9 @@ jobs:
         run: |
           yarn install
           yarn vsce package
+
+      - name: Archive vscode packaged extension
+        uses: actions/upload-artifact@v3
+        with:
+          name: solidity-analyzer-vscode-extension
+          path: client/solidity-analyzer-*.vsix
