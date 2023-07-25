@@ -10,11 +10,21 @@
 
 ```bash
 $ cargo b
-# extension uses ~/bin/solidity-analyzer-ls as the language server
-$ ln -s $PWD/target/debug/solidity-analyzer-ls ~/bin/solidity-analyzer-ls
 ```
+
+Check the [configuration path below](#configuration).
 
 ## Extension
 
 Open [`extension.ts`](./client/src/extension.ts) in VSCode and run in debug mode
 with <kbd>F5</kbd>.
+
+### Configuration
+
+The extension will try to run the language server from the paths in following order:
+
+1. `solidity-analyzer.languageServerPath` configuration value if it exists
+2. `SOLIDITY_ANALYZER_SERVER_PATH` environment variable if it exists
+3. Will search the folders in `PATH` to see if `solidity-analyzer-ls` exists in any of them. Will run the first entry it'd find.
+4. If it doesn't even exist in the `PATH` it will try `~/bin/solidity-analyzer-ls`.
+5. If found nowhere it'd show an error and exit.

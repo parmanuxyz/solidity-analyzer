@@ -1,12 +1,26 @@
-import { ExtensionContext, window } from 'vscode';
+import { ExtensionContext, window, workspace } from 'vscode';
 import {
   Executable,
   LanguageClient,
   LanguageClientOptions,
   ServerOptions,
 } from 'vscode-languageclient/node';
+import * as path from 'path';
+import * as fs from 'fs';
+import * as os from 'os';
 
 let client: LanguageClient;
+
+const getFromPath = (bin: string, def: string) => {
+  const paths = process.env.PATH?.split(path.delimiter) || [];
+  const binPaths = paths.map((x) => path.join(x, bin));
+  const found = binPaths.find((x) => {
+    return fs.existsSync(x);
+  });
+  return found || def;
+};
+
+const SOLIDITY_ANALYZER_SERVER_BIN_NAME = 'solidity-analyzer-ls';
 
 export async function activate(context: ExtensionContext) {
   // let disposable = commands.registerCommand("extension.helloworld", async uri => {
@@ -19,10 +33,26 @@ export async function activate(context: ExtensionContext) {
     'Solidity Analyzer Language Server Trace'
   );
   traceOutputChannel.appendLine('Solidity Analyzer Language Server Trace');
-  const command =
-    process.env.SERVER_PATH || process.env.HOME + '/bin/solidity-analyzer-ls';
+
+  const serverPathEnv = process.env.SOLIDITY_ANALYZER_SERVER_PATH;
+  const serverPathConfig = workspace
+    .getConfiguration('solidity-analyzer')
+    .get<string>('languageServerPath');
+  const defaultPath = getFromPath(
+    SOLIDITY_ANALYZER_SERVER_BIN_NAME,
+    path.join(os.homedir(), 'bin', SOLIDITY_ANALYZER_SERVER_BIN_NAME)
+  );
+  const serverPath = serverPathConfig || serverPathEnv || defaultPath;
+  if (!fs.existsSync(serverPath)) {
+    window.showErrorMessage(
+      `Solidity Analyzer Language Server not found at ${serverPath}`
+    );
+    process.exit(1);
+    return;
+  }
+
   const run: Executable = {
-    command,
+    command: serverPath,
     options: {
       env: {
         ...process.env,
@@ -46,8 +76,8 @@ export async function activate(context: ExtensionContext) {
 
   // Create the language client and start the clien5t.
   client = new LanguageClient(
-    'solidity-analyzer-ls',
-    'solidity analyzer language server',
+    'solidity-analyzer',
+    'Solidity language support for Visual Studio Code',
     serverOptions,
     clientOptions
   );

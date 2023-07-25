@@ -18,8 +18,9 @@
   "contributes": {
     "configuration": {
       "properties": {
-        "solidity-analyzer-ls.trace.server": {
-          "default": "verbose"
+        "solidity-analyzer.languageServerPath": {
+          "type": "string",
+          "description": "Path to the solidity-analyzer-ls binary"
         }
       }
     },
