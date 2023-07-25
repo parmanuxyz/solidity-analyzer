@@ -1,18 +1,17 @@
-name: Rust Build and Test
+name: Build and Test
 
 on:
   push:
-    branches:
-      - master
+  pull_request_target:
 
 jobs:
-  build-and-test:
-    name: Build and Test
+  build-and-test-ls:
+    name: Build and Test Language Server
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Set up Rust
         uses: actions-rs/toolchain@v1
@@ -41,3 +40,33 @@ jobs:
         run: |
           cargo build
           cargo test
+
+  build-and-test-extension:
+    name: Build and Test Extension
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: client
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          cache: yarn
+          cache-dependency-path: client/yarn.lock
+          node-version: 18
+
+      - name: Build and Test
+        run: |
+          yarn install
+          yarn vsce package
+
+      - name: Archive vscode packaged extension
+        uses: actions/upload-artifact@v3
+        with:
+          name: solidity-analyzer-vscode-extension
+          path: client/solidity-analyzer-*.vsix
