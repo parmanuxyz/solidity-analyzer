@@ -4,21 +4,35 @@ use forge_fmt::solang_ext::pt::TypeDefinition;
 use solang_parser::pt::*;
 use tower_lsp::lsp_types::{DocumentSymbol, Range, SymbolKind, SymbolTag};
 
+use crate::append_to_file;
+use crate::backend::Source;
+
 pub trait ToDocumentSymbol {
-    fn to_document_symbol(&self) -> DocumentSymbol;
-    fn try_to_document_symbol(&self) -> Option<DocumentSymbol> {
-        Some(self.to_document_symbol())
+    fn to_document_symbol(&self, source: &Source) -> DocumentSymbol;
+    fn try_to_document_symbol(&self, source: &Source) -> Option<DocumentSymbol> {
+        Some(self.to_document_symbol(source))
     }
 }
 
 impl ToDocumentSymbol for Identifier {
-    fn to_document_symbol(&self) -> DocumentSymbol {
-        DocumentSymbolBuilder::new(self.name.clone(), SymbolKind::VARIABLE).build()
+    fn to_document_symbol(&self, source: &Source) -> DocumentSymbol {
+        let mut range = Range::default();
+        append_to_file!("/Users/meet/solidity-analyzer.log", "loc: {:?}", self.loc);
+        if matches!(self.loc, Loc::File(_, _, _)) {
+            if let Ok(range_) = source.loc_to_range(&self.loc) {
+                range = range_;
+            }
+        }
+
+        DocumentSymbolBuilder::new(self.name.clone(), SymbolKind::VARIABLE)
+            .range(range.clone())
+            .selection_range(range)
+            .build()
     }
 }
 
 impl ToDocumentSymbol for EnumDefinition {
-    fn to_document_symbol(&self) -> DocumentSymbol {
+    fn to_document_symbol(&self, source: &Source) -> DocumentSymbol {
         DocumentSymbolBuilder::new_with_identifier(&self.name, "<enum>", SymbolKind::ENUM)
             .children(
                 self.values
@@ -27,7 +41,7 @@ impl ToDocumentSymbol for EnumDefinition {
                     .map(|enum_value| DocumentSymbol {
                         kind: SymbolKind::ENUM_MEMBER,
                         // okay to unwrap because filtered Nones
-                        ..enum_value.as_ref().unwrap().to_document_symbol()
+                        ..enum_value.as_ref().unwrap().to_document_symbol(source)
                     })
                     .collect::<Vec<DocumentSymbol>>(),
             )
@@ -36,7 +50,7 @@ impl ToDocumentSymbol for EnumDefinition {
 }
 
 impl ToDocumentSymbol for VariableDefinition {
-    fn to_document_symbol(&self) -> DocumentSymbol {
+    fn to_document_symbol(&self, source: &Source) -> DocumentSymbol {
         let mut builder =
             DocumentSymbolBuilder::new_with_identifier(&self.name, "<var>", SymbolKind::VARIABLE);
 
@@ -49,7 +63,7 @@ impl ToDocumentSymbol for VariableDefinition {
 }
 
 impl ToDocumentSymbol for VariableDeclaration {
-    fn to_document_symbol(&self) -> DocumentSymbol {
+    fn to_document_symbol(&self, source: &Source) -> DocumentSymbol {
         let mut builder =
             DocumentSymbolBuilder::new_with_identifier(&self.name, "<var>", SymbolKind::VARIABLE);
 
@@ -62,14 +76,14 @@ impl ToDocumentSymbol for VariableDeclaration {
 }
 
 impl ToDocumentSymbol for StructDefinition {
-    fn to_document_symbol(&self) -> DocumentSymbol {
+    fn to_document_symbol(&self, source: &Source) -> DocumentSymbol {
         DocumentSymbolBuilder::new_with_identifier(&self.name, "<struct>", SymbolKind::STRUCT)
             .children(
                 self.fields
                     .iter()
                     .map(|field| DocumentSymbol {
                         kind: SymbolKind::FIELD,
-                        ..field.to_document_symbol()
+                        ..field.to_document_symbol(source)
                     })
                     .collect::<Vec<DocumentSymbol>>(),
             )
@@ -78,14 +92,14 @@ impl ToDocumentSymbol for StructDefinition {
 }
 
 impl ToDocumentSymbol for FunctionDefinition {
-    fn to_document_symbol(&self) -> DocumentSymbol {
+    fn to_document_symbol(&self, source: &Source) -> DocumentSymbol {
         DocumentSymbolBuilder::new_with_identifier(&self.name, "<function>", SymbolKind::FUNCTION)
             .build()
     }
 }
 
 impl ToDocumentSymbol for ErrorDefinition {
-    fn to_document_symbol(&self) -> DocumentSymbol {
+    fn to_document_symbol(&self, source: &Source) -> DocumentSymbol {
         DocumentSymbolBuilder::new(
             format!(
                 "error {}",
@@ -100,7 +114,7 @@ impl ToDocumentSymbol for ErrorDefinition {
 }
 
 impl ToDocumentSymbol for EventDefinition {
-    fn to_document_symbol(&self) -> DocumentSymbol {
+    fn to_document_symbol(&self, source: &Source) -> DocumentSymbol {
         DocumentSymbolBuilder::new(
             format!(
                 "event {}",
@@ -115,40 +129,48 @@ impl ToDocumentSymbol for EventDefinition {
 }
 
 impl ToDocumentSymbol for TypeDefinition {
-    fn to_document_symbol(&self) -> DocumentSymbol {
+    fn to_document_symbol(&self, source: &Source) -> DocumentSymbol {
         DocumentSymbolBuilder::new(format!("type {}", self.name.name), SymbolKind::OBJECT).build()
     }
 }
 
 impl ToDocumentSymbol for ContractPart {
-    fn to_document_symbol(&self) -> DocumentSymbol {
+    fn to_document_symbol(&self, source: &Source) -> DocumentSymbol {
         unimplemented!()
     }
 
-    fn try_to_document_symbol(&self) -> Option<DocumentSymbol> {
+    fn try_to_document_symbol(&self, source: &Source) -> Option<DocumentSymbol> {
         match self {
             Self::StructDefinition(struct_definition) => {
-                Some(struct_definition.to_document_symbol())
+                Some(struct_definition.to_document_symbol(source))
             }
-            Self::EnumDefinition(enum_definition) => Some(enum_definition.to_document_symbol()),
-            Self::EventDefinition(event_definition) => Some(event_definition.to_document_symbol()),
-            Self::ErrorDefinition(error_definition) => Some(error_definition.to_document_symbol()),
+            Self::EnumDefinition(enum_definition) => {
+                Some(enum_definition.to_document_symbol(source))
+            }
+            Self::EventDefinition(event_definition) => {
+                Some(event_definition.to_document_symbol(source))
+            }
+            Self::ErrorDefinition(error_definition) => {
+                Some(error_definition.to_document_symbol(source))
+            }
             Self::FunctionDefinition(func_definition) => Some(DocumentSymbol {
                 kind: SymbolKind::METHOD,
-                ..func_definition.to_document_symbol()
+                ..func_definition.to_document_symbol(source)
             }),
             Self::VariableDefinition(variable_definition) => Some(DocumentSymbol {
                 kind: SymbolKind::PROPERTY,
-                ..variable_definition.to_document_symbol()
+                ..variable_definition.to_document_symbol(source)
             }),
-            Self::TypeDefinition(type_definition) => Some(type_definition.to_document_symbol()),
+            Self::TypeDefinition(type_definition) => {
+                Some(type_definition.to_document_symbol(source))
+            }
             _ => None,
         }
     }
 }
 
 impl ToDocumentSymbol for ContractDefinition {
-    fn to_document_symbol(&self) -> DocumentSymbol {
+    fn to_document_symbol(&self, source: &Source) -> DocumentSymbol {
         let kind = match self.ty {
             ContractTy::Abstract(_) | ContractTy::Contract(_) | ContractTy::Library(_) => {
                 SymbolKind::CLASS
@@ -160,7 +182,7 @@ impl ToDocumentSymbol for ContractDefinition {
             .children(
                 self.parts
                     .iter()
-                    .filter_map(|part| part.try_to_document_symbol())
+                    .filter_map(|part| part.try_to_document_symbol(source))
                     .collect(),
             )
             .build()

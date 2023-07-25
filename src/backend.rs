@@ -20,7 +20,7 @@ use crate::utils;
 #[derive(Debug)]
 pub struct Backend {
     pub client: Client,
-    pub documents: DashMap<String, String>,
+    pub documents: DashMap<String, Source>,
     pub client_capabilities: OnceLock<ClientCapabilities>,
     pub document_symbols: DashMap<String, Vec<DocumentSymbol>>,
     pub document_diagnostics: DashMap<String, Vec<solang_parser::diagnostics::Diagnostic>>,
@@ -38,6 +38,10 @@ pub enum BackendError {
     UnprocessableUrlError,
     #[error("Solidity parse error")]
     SolidityParseError(Vec<solang_parser::diagnostics::Diagnostic>),
+    #[error("Position not found error")]
+    PositionNotFoundError,
+    #[error("Invalid location error")]
+    InvalidLocationError,
 }
 
 enum FileAction {
@@ -155,7 +159,12 @@ impl Backend {
         // if the document is owned by client, use the synchronized
         // copy in server's memory
         if self.documents.contains_key(&file_path.to_string()) {
-            return Ok(self.documents.get(&file_path.to_string()).unwrap().clone());
+            return Ok(self
+                .documents
+                .get(&file_path.to_string())
+                .unwrap()
+                .text
+                .clone());
         }
 
         // read from disk if the document is not owned by client
@@ -168,7 +177,8 @@ impl Backend {
     }
 
     pub async fn add_file(&self, file_path: &Url, file_contents: String) {
-        self.documents.insert(file_path.to_string(), file_contents);
+        self.documents
+            .insert(file_path.to_string(), Source::new(file_contents));
         self.on_file_change(FileAction::Open, file_path).await;
     }
 
@@ -178,7 +188,8 @@ impl Backend {
     }
 
     pub async fn update_file(&self, file_path: &Url, file_contents: String) {
-        self.documents.insert(file_path.to_string(), file_contents);
+        self.documents
+            .insert(file_path.to_string(), Source::new(file_contents));
         self.on_file_change(FileAction::Update, file_path).await;
     }
 
@@ -256,35 +267,234 @@ impl Backend {
             .map_err(|_| BackendError::ReadError)?;
         let (source_unit, _comments) =
             solang_parser::parse(&file_contents, 0).map_err(BackendError::SolidityParseError)?;
+        let source = Source::new(file_contents);
 
         Ok(source_unit
             .0
             .iter()
             .filter_map(|part| match part {
-                SourceUnitPart::ContractDefinition(contract) => Some(contract.to_document_symbol()),
+                SourceUnitPart::ContractDefinition(contract) => {
+                    Some(contract.to_document_symbol(&source))
+                }
                 SourceUnitPart::EnumDefinition(enum_definition) => {
-                    Some(enum_definition.to_document_symbol())
+                    Some(enum_definition.to_document_symbol(&source))
                 }
                 SourceUnitPart::StructDefinition(struct_definition) => {
-                    Some(struct_definition.to_document_symbol())
+                    Some(struct_definition.to_document_symbol(&source))
                 }
                 SourceUnitPart::EventDefinition(event_definition) => {
-                    Some(event_definition.to_document_symbol())
+                    Some(event_definition.to_document_symbol(&source))
                 }
                 SourceUnitPart::ErrorDefinition(error_definition) => {
-                    Some(error_definition.to_document_symbol())
+                    Some(error_definition.to_document_symbol(&source))
                 }
                 SourceUnitPart::FunctionDefinition(func_definition) => {
-                    Some(func_definition.to_document_symbol())
+                    Some(func_definition.to_document_symbol(&source))
                 }
                 SourceUnitPart::VariableDefinition(variable_definition) => {
-                    Some(variable_definition.to_document_symbol())
+                    Some(variable_definition.to_document_symbol(&source))
                 }
                 SourceUnitPart::TypeDefinition(type_definition) => {
-                    Some(type_definition.to_document_symbol())
+                    Some(type_definition.to_document_symbol(&source))
                 }
                 _ => None,
             })
             .collect())
+    }
+}
+
+#[derive(Debug)]
+pub struct Source {
+    pub text: String,
+    pub line_lengths: Vec<usize>,
+}
+
+impl Source {
+    fn new(source: String) -> Self {
+        let line_lengths = source.as_str().lines().map(|x| x.len()).collect();
+
+        Source {
+            text: source,
+            line_lengths,
+        }
+    }
+
+    pub fn loc_to_range(
+        &self,
+        loc: &solang_parser::pt::Loc,
+    ) -> Result<tower_lsp::lsp_types::Range, BackendError> {
+        if let solang_parser::pt::Loc::File(_, start, end) = loc {
+            let start_pos = self.byte_index_to_position(*start)?;
+            let end_pos = self.byte_index_to_position(*end)?;
+            Ok(tower_lsp::lsp_types::Range {
+                start: start_pos,
+                end: end_pos,
+            })
+        } else {
+            Err(BackendError::InvalidLocationError)
+        }
+    }
+
+    fn byte_index_to_position(
+        &self,
+        index: usize,
+    ) -> Result<tower_lsp::lsp_types::Position, BackendError> {
+        let mut chars_read = 0;
+        for (i, line_length) in self.line_lengths.iter().enumerate() {
+            let line_number = i;
+            let last_char_pos = chars_read + line_length;
+            let first_char_pos = chars_read;
+            if index >= first_char_pos && index <= last_char_pos {
+                return Ok(tower_lsp::lsp_types::Position {
+                    line: line_number as u32,
+                    character: (index - first_char_pos) as u32,
+                });
+            }
+            chars_read += line_length + 1; // for \n
+        }
+        Err(BackendError::PositionNotFoundError)
+    }
+
+    #[allow(dead_code)]
+    fn position_to_byte_index(
+        &self,
+        position: &tower_lsp::lsp_types::Position,
+    ) -> Result<usize, BackendError> {
+        let mut chars_read = 0;
+        for (i, line_length) in self.line_lengths.iter().enumerate() {
+            let line_number = i;
+            let _last_char_pos = chars_read + line_length;
+            let first_char_pos = chars_read;
+            if position.line as usize == line_number {
+                return Ok(first_char_pos + position.character as usize);
+            }
+            chars_read += line_length + 1; // for \n
+        }
+        Err(BackendError::PositionNotFoundError)
+    }
+
+    #[allow(dead_code)]
+    fn get_loc_substring(&self, loc: &solang_parser::pt::Loc) -> String {
+        if let solang_parser::pt::Loc::File(_, start, end) = loc {
+            self.text[*start..*end].to_string()
+        } else {
+            "".to_string()
+        }
+    }
+
+    #[allow(dead_code)]
+    fn get_range_substring(&self, range: &tower_lsp::lsp_types::Range) -> String {
+        let start = self.position_to_byte_index(&range.start).unwrap();
+        let end = self.position_to_byte_index(&range.end).unwrap();
+        self.text[start..end].to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use solang_parser::pt::*;
+
+    mod SourceTests {
+        use super::*;
+
+        #[test]
+        fn test_byte_index_to_position() {
+            let source: &str = r#"contract flipper {
+    bool private value;
+
+    /// Constructor that initializes the `bool` value to the given `init_value`.
+    constructor(bool initvalue) {
+        value = initvalue;
+    }
+
+    /// A message that can be called on instantiated contracts.
+    /// This one flips the value of the stored `bool` from `true`
+    /// to `false` and vice versa.
+    function flip() public {
+        value = !value;
+    }
+
+    /// Simply returns the current value of our `bool`.
+    function get() public view returns (bool) {
+        return value;
+    }
+
+    function something() public
+      view
+        returns (uint _a) {
+            return 0;
+        }
+}"#;
+            let source_bytes = source.as_bytes();
+            let src = Source::new(source.to_string());
+            let lines = source.lines().collect::<Vec<&str>>();
+            let (tree, _comments) = solang_parser::parse(source, 0).unwrap();
+
+            let verify_loc_to_range = |loc: &Loc| {
+                if let Loc::File(_, loc_start, loc_end) = loc {
+                    let loc_string = String::from_utf8_lossy(&source_bytes[*loc_start..*loc_end]);
+                    let range = src.loc_to_range(loc).unwrap();
+
+                    let range_string = if range.start.line != range.end.line {
+                        let start_line = lines[range.start.line as usize]
+                            [range.start.character as usize..]
+                            .to_string();
+                        let end_line = lines[range.end.line as usize]
+                            [..range.end.character as usize]
+                            .to_string();
+
+                        let in_between_start = range.start.line as usize + 1;
+                        let in_between_end = range.end.line as usize - 1;
+
+                        let mut in_between_lines = None;
+                        if in_between_start <= in_between_end {
+                            let to_join = lines[in_between_start..=in_between_end].to_vec();
+                            in_between_lines = Some(to_join.join("\n"));
+                        }
+                        (if let Some(in_between_lines) = in_between_lines {
+                            vec![start_line, in_between_lines, end_line]
+                        } else {
+                            vec![start_line, end_line]
+                        })
+                        .join("\n")
+                    } else {
+                        lines[range.start.line as usize]
+                            [range.start.character as usize..range.end.character as usize]
+                            .to_string()
+                    };
+
+                    assert_eq!(
+                        loc_string, range_string,
+                        "loc: {:#?}, range: {:#?}",
+                        loc, range
+                    );
+
+                    println!(
+                        "loc_string: {:?}, range_string: {:?}",
+                        loc_string, range_string
+                    );
+                }
+            };
+
+            for part in &tree.0 {
+                match part {
+                    SourceUnitPart::ContractDefinition(def) => {
+                        for part in &def.parts {
+                            match part {
+                                ContractPart::VariableDefinition(def) => {
+                                    verify_loc_to_range(&def.loc);
+                                }
+                                ContractPart::FunctionDefinition(def) => {
+                                    verify_loc_to_range(&def.loc);
+                                }
+                                _ => (),
+                            }
+                        }
+                    }
+                    _ => (),
+                }
+            }
+        }
     }
 }
