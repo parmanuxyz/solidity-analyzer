@@ -64,6 +64,9 @@ jobs:
         uses: pnpm/action-setup@v2
         with:
           version: 8
+          run_install:
+            - recursive: true
+              args: [--frozen-lockfile, --strict-peer-dependencies]
 
       - name: Get pnpm store directory
         id: pnpm-cache
@@ -81,6 +84,4 @@ jobs:
 
       - name: Build and Test
         run: |
-          pnpm install
-          pnpm install --dev
           pnpm exec vsce package
