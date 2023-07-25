@@ -11,6 +11,7 @@ async fn main() {
         documents: Default::default(),
         client_capabilities: Default::default(),
         document_symbols: Default::default(),
+        document_diagnostics: Default::default(),
     });
     Server::new(stdin, stdout, socket).serve(service).await;
 }
