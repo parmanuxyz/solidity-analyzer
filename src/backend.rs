@@ -1,21 +1,27 @@
 use std::{
+    collections::HashMap,
     fmt::Debug,
     fs::{metadata, File},
     io::Read,
     os::unix::prelude::MetadataExt,
+    path::PathBuf,
     sync::OnceLock,
 };
 
 use dashmap::DashMap;
+use ethers_solc::{artifacts::Severity, Project, ProjectCompileOutput, ProjectPathsConfig};
 use similar::{DiffOp, TextDiff};
 use solang_parser::pt::SourceUnitPart;
 use tower_lsp::{
-    lsp_types::{ClientCapabilities, DocumentSymbol, Position, Range, TextEdit, Url},
+    lsp_types::{
+        ClientCapabilities, Diagnostic, DiagnosticSeverity, DocumentSymbol, NumberOrString,
+        Position, Range, TextEdit, Url,
+    },
     Client,
 };
 
-use crate::solang::document_symbol::ToDocumentSymbol;
 use crate::utils;
+use crate::{append_to_file, solang::document_symbol::ToDocumentSymbol};
 
 #[derive(Debug)]
 pub struct Backend {
@@ -24,6 +30,8 @@ pub struct Backend {
     pub client_capabilities: OnceLock<ClientCapabilities>,
     pub document_symbols: DashMap<String, Vec<DocumentSymbol>>,
     pub document_diagnostics: DashMap<String, Vec<solang_parser::diagnostics::Diagnostic>>,
+    pub solc_diagnostics: DashMap<PathBuf, Vec<Diagnostic>>,
+    pub project_compilation_output: DashMap<PathBuf, ProjectCompileOutput>,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -205,8 +213,105 @@ impl Backend {
             }
             _ => {
                 self.update_document_symbols(path).await;
+                if self.compile_project(path).is_ok() {
+                    let root = utils::get_root_path(path).unwrap();
+                    let output = self.project_compilation_output.get(&root).unwrap();
+                    let diagnostics = self.compile_errors_to_diagnostic(&root, output.clone());
+                    if diagnostics.len() > 0 {
+                        self.solc_diagnostics.insert(root.clone(), diagnostics);
+                        self.on_solc_diagnostics_update(&root).await;
+                    }
+                }
             }
         }
+    }
+
+    async fn on_solc_diagnostics_update(&self, root: &PathBuf) {
+        if let Some(diagnostics) = self.solc_diagnostics.get(root) {
+            // group by file
+            let mut map = HashMap::<Url, Vec<&Diagnostic>>::new();
+            for diagnostic in diagnostics.iter() {
+                if let Some(data) = &diagnostic.data {
+                    if let Some(url) = data.get("url") {
+                        if let Some(url) = url.as_str() {
+                            let url = Url::parse(url).unwrap();
+                            if map.contains_key(&url) {
+                                map.get_mut(&url).unwrap().push(diagnostic);
+                            } else {
+                                map.insert(url, vec![diagnostic]);
+                            }
+                        }
+                    }
+                }
+            }
+
+            for (uri, diags) in map {
+                if diags.len() > 0 {
+                    self.client
+                        .publish_diagnostics(
+                            uri.clone(),
+                            diags.into_iter().map(|x| x.clone()).collect(),
+                            None,
+                        )
+                        .await;
+                }
+            }
+        }
+    }
+
+    fn compile_errors_to_diagnostic(
+        &self,
+        root: &PathBuf,
+        output: ProjectCompileOutput,
+    ) -> Vec<Diagnostic> {
+        output
+            .output()
+            .errors
+            .iter()
+            .filter(|err| {
+                err.source_location.is_some()
+                    && (std::path::Path::new(
+                        &root.join(&err.source_location.as_ref().unwrap().file),
+                    )
+                    .exists())
+            })
+            .map(|err| {
+                let severity = match err.severity {
+                    Severity::Error => Some(DiagnosticSeverity::ERROR),
+                    Severity::Warning => Some(DiagnosticSeverity::WARNING),
+                    Severity::Info => Some(DiagnosticSeverity::INFORMATION),
+                };
+                let source_location = err.source_location.as_ref().unwrap();
+                let path = root.join(&source_location.file);
+                let url_string = format!("file://{}", path.to_str().unwrap());
+                let url = Url::parse(&url_string).unwrap();
+                // append_to_file!("/Users/meet/solidity-analyzer.log", "url: {}", url);
+                let file_contents = self.read_file(url).unwrap();
+                let src = Source::new(file_contents);
+                let range = Range {
+                    start: src
+                        .byte_index_to_position(source_location.start as usize)
+                        .unwrap(),
+                    end: src
+                        .byte_index_to_position(source_location.end as usize)
+                        .unwrap(),
+                };
+
+                Diagnostic {
+                    range,
+                    severity: severity,
+                    source: Some("solc".to_string()),
+                    code: err.error_code.map(|x| x as i32).map(NumberOrString::Number),
+                    code_description: None,
+                    message: err.message.clone(),
+                    related_information: None,
+                    tags: None,
+                    data: Some(serde_json::json!({
+                        "url": url_string
+                    })),
+                }
+            })
+            .collect()
     }
 
     pub async fn update_document_symbols(&self, path: &Url) -> bool {
@@ -225,11 +330,21 @@ impl Backend {
                 if let BackendError::SolidityParseError(diagnostics) = error {
                     self.document_diagnostics
                         .insert(path.to_string(), diagnostics);
-                    self.on_document_diagnostic_update(path).await
+                    self.on_document_diagnostic_update(path).await;
                 }
                 false
             }
         }
+    }
+
+    fn compile_project(&self, path: &Url) -> anyhow::Result<()> {
+        let root_path = utils::get_root_path(path)?;
+        let project = Project::builder()
+            .paths(ProjectPathsConfig::dapptools(root_path.as_os_str()).unwrap())
+            .build()?;
+        let output = project.compile()?;
+        self.project_compilation_output.insert(root_path, output);
+        Ok(())
     }
 
     async fn on_document_diagnostic_update(&self, _path: &Url) {
@@ -310,7 +425,7 @@ pub struct Source {
 }
 
 impl Source {
-    fn new(source: String) -> Self {
+    pub fn new(source: String) -> Self {
         let line_lengths = source.as_str().lines().map(|x| x.len()).collect();
 
         Source {
@@ -335,7 +450,7 @@ impl Source {
         }
     }
 
-    fn byte_index_to_position(
+    pub fn byte_index_to_position(
         &self,
         index: usize,
     ) -> Result<tower_lsp::lsp_types::Position, BackendError> {

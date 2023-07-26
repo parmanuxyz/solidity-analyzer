@@ -17,20 +17,26 @@ pub fn url_to_path(url: &Url) -> Result<PathBuf, BackendError> {
 }
 
 pub fn get_foundry_config(url: &Url) -> Result<Config, BackendError> {
-    let path = url_to_path(url)?;
-    let dir = path.parent().unwrap().to_path_buf();
-    let root_path = find_project_root_path(Some(&dir)).map_or(RootPath(dir), RootPath);
+    let root_path =
+        get_root_path(url).or(Ok((url_to_path(url)?.parent().unwrap()).to_path_buf()))?;
+
     // crate::append_to_file!(
     //     "/Users/meet/solidity-analyzer.log",
     //     "root_path: {:?}",
     //     root_path
     // );
     let config = Config::from_provider(Into::<Figment>::into(Config {
-        __root: root_path,
+        __root: RootPath(root_path),
         ..Default::default()
     }));
     // crate::append_to_file!("/Users/meet/solidity-analyzer.log", "config: {:#?}", config);
     Ok(config)
+}
+
+pub fn get_root_path(path: &Url) -> anyhow::Result<PathBuf> {
+    let path = url_to_path(path)?;
+    let dir = path.parent().unwrap().to_path_buf();
+    Ok(foundry_config::find_project_root_path(Some(&dir))?)
 }
 
 #[macro_export]

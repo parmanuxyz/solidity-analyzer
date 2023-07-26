@@ -42,6 +42,10 @@ impl LanguageServer for Backend {
         let file_path: Url = params.text_document.uri;
         // append_to_file!(
         //     "/Users/meet/solidity-analyzer.log",
+        //     "did_open request for {file_path}"
+        // );
+        // append_to_file!(
+        //     "/Users/meet/solidity-analyzer.log",
         //     "did_open request for {file_path} and {:?}",
         //     params.text_document.language_id
         // );
