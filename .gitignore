@@ -3,3 +3,4 @@ client/node_modules/
 client/out/
 src/bin/test.rs
 **.vsix
+src/bin/*_test.rs

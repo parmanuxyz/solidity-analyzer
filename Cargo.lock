@@ -2374,6 +2374,7 @@ dependencies = [
  "ethers-solc 2.0.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "forge-fmt",
  "foundry-config",
+ "serde_json",
  "similar",
  "solang-parser",
  "thiserror",
