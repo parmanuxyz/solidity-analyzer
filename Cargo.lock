@@ -822,7 +822,7 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 [[package]]
 name = "forge-fmt"
 version = "0.2.0"
-source = "git+https://github.com/meetmangukiya/foundry?branch=find-project-root-path-arg#f6d1744c30de34959bf69137c0e23cede4d02b59"
+source = "git+https://github.com/foundry-rs/foundry#0e33b3e4246482e21b7008a3e6fe115ed6dda85b"
 dependencies = [
  "ariadne",
  "ethers-core 2.0.8 (git+https://github.com/gakonst/ethers-rs)",
@@ -846,7 +846,7 @@ dependencies = [
 [[package]]
 name = "foundry-config"
 version = "0.2.0"
-source = "git+https://github.com/meetmangukiya/foundry?branch=find-project-root-path-arg#f6d1744c30de34959bf69137c0e23cede4d02b59"
+source = "git+https://github.com/foundry-rs/foundry#0e33b3e4246482e21b7008a3e6fe115ed6dda85b"
 dependencies = [
  "Inflector",
  "dirs-next",
