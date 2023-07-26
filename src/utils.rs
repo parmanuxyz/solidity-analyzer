@@ -1,7 +1,7 @@
 use std::default::Default;
 use std::path::PathBuf;
 
-use foundry_config::{figment::Figment, find_project_root_path, Config, RootPath};
+use foundry_config::{figment::Figment, Config, RootPath};
 use tower_lsp::lsp_types::Url;
 
 use crate::backend::BackendError;

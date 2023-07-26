@@ -21,6 +21,7 @@ use tower_lsp::{
 };
 
 use crate::utils;
+#[allow(unused_imports)]
 use crate::{append_to_file, solang::document_symbol::ToDocumentSymbol};
 
 #[derive(Debug)]
@@ -217,7 +218,7 @@ impl Backend {
                     let root = utils::get_root_path(path).unwrap();
                     let output = self.project_compilation_output.get(&root).unwrap();
                     let diagnostics = self.compile_errors_to_diagnostic(&root, output.clone());
-                    if diagnostics.len() > 0 {
+                    if !diagnostics.is_empty() {
                         self.solc_diagnostics.insert(root.clone(), diagnostics);
                         self.on_solc_diagnostics_update(&root).await;
                     }
@@ -246,11 +247,11 @@ impl Backend {
             }
 
             for (uri, diags) in map {
-                if diags.len() > 0 {
+                if !diags.is_empty() {
                     self.client
                         .publish_diagnostics(
                             uri.clone(),
-                            diags.into_iter().map(|x| x.clone()).collect(),
+                            diags.into_iter().cloned().collect(),
                             None,
                         )
                         .await;
@@ -261,7 +262,7 @@ impl Backend {
 
     fn compile_errors_to_diagnostic(
         &self,
-        root: &PathBuf,
+        root: &std::path::Path,
         output: ProjectCompileOutput,
     ) -> Vec<Diagnostic> {
         output
@@ -299,7 +300,7 @@ impl Backend {
 
                 Diagnostic {
                     range,
-                    severity: severity,
+                    severity,
                     source: Some("solc".to_string()),
                     code: err.error_code.map(|x| x as i32).map(NumberOrString::Number),
                     code_description: None,
