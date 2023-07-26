@@ -236,10 +236,12 @@ impl Backend {
                     if let Some(url) = data.get("url") {
                         if let Some(url) = url.as_str() {
                             let url = Url::parse(url).unwrap();
-                            if map.contains_key(&url) {
-                                map.get_mut(&url).unwrap().push(diagnostic);
+                            if let std::collections::hash_map::Entry::Vacant(e) =
+                                map.entry(url.clone())
+                            {
+                                e.insert(vec![diagnostic]);
                             } else {
-                                map.insert(url, vec![diagnostic]);
+                                map.get_mut(&url).unwrap().push(diagnostic);
                             }
                         }
                     }
