@@ -8,12 +8,8 @@ async fn main() {
 
     let (service, socket) = LspService::new(|client| Backend {
         client,
-        documents: Default::default(),
         client_capabilities: Default::default(),
-        document_symbols: Default::default(),
-        document_diagnostics: Default::default(),
-        project_compilation_output: Default::default(),
-        solc_diagnostics: Default::default(),
+        state: Default::default(),
     });
     Server::new(stdin, stdout, socket).serve(service).await;
 }

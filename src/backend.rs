@@ -24,15 +24,20 @@ use crate::utils;
 #[allow(unused_imports)]
 use crate::{append_to_file, solang::document_symbol::ToDocumentSymbol};
 
-#[derive(Debug)]
-pub struct Backend {
-    pub client: Client,
+#[derive(Debug, Default)]
+pub struct BackendState {
     pub documents: DashMap<String, Source>,
-    pub client_capabilities: OnceLock<ClientCapabilities>,
     pub document_symbols: DashMap<String, Vec<DocumentSymbol>>,
     pub document_diagnostics: DashMap<String, Vec<solang_parser::diagnostics::Diagnostic>>,
     pub solc_diagnostics: DashMap<PathBuf, Vec<Diagnostic>>,
     pub project_compilation_output: DashMap<PathBuf, ProjectCompileOutput>,
+}
+
+#[derive(Debug)]
+pub struct Backend {
+    pub client: Client,
+    pub client_capabilities: OnceLock<ClientCapabilities>,
+    pub state: BackendState,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -167,8 +172,9 @@ impl Backend {
     fn read_file(&self, file_path: Url) -> anyhow::Result<String> {
         // if the document is owned by client, use the synchronized
         // copy in server's memory
-        if self.documents.contains_key(&file_path.to_string()) {
+        if self.state.documents.contains_key(&file_path.to_string()) {
             return Ok(self
+                .state
                 .documents
                 .get(&file_path.to_string())
                 .unwrap()
@@ -186,18 +192,20 @@ impl Backend {
     }
 
     pub async fn add_file(&self, file_path: &Url, file_contents: String) {
-        self.documents
+        self.state
+            .documents
             .insert(file_path.to_string(), Source::new(file_contents));
         self.on_file_change(FileAction::Open, file_path).await;
     }
 
     pub async fn remove_file(&self, file_path: &Url) {
-        self.documents.remove(&file_path.to_string());
+        self.state.documents.remove(&file_path.to_string());
         self.on_file_change(FileAction::Close, file_path).await;
     }
 
     pub async fn update_file(&self, file_path: &Url, file_contents: String) {
-        self.documents
+        self.state
+            .documents
             .insert(file_path.to_string(), Source::new(file_contents));
         self.on_file_change(FileAction::Update, file_path).await;
     }
@@ -209,17 +217,19 @@ impl Backend {
     async fn on_file_change(&self, action: FileAction, path: &Url) {
         match action {
             FileAction::Close => {
-                self.document_symbols.remove(&path.to_string());
-                self.document_diagnostics.remove(&path.to_string());
+                self.state.document_symbols.remove(&path.to_string());
+                self.state.document_diagnostics.remove(&path.to_string());
             }
             _ => {
                 self.update_document_symbols(path).await;
                 if self.compile_project(path).is_ok() {
                     let root = utils::get_root_path(path).unwrap();
-                    let output = self.project_compilation_output.get(&root).unwrap();
+                    let output = self.state.project_compilation_output.get(&root).unwrap();
                     let diagnostics = self.compile_errors_to_diagnostic(&root, output.clone());
                     if !diagnostics.is_empty() {
-                        self.solc_diagnostics.insert(root.clone(), diagnostics);
+                        self.state
+                            .solc_diagnostics
+                            .insert(root.clone(), diagnostics);
                         self.on_solc_diagnostics_update(&root).await;
                     }
                 }
@@ -228,7 +238,7 @@ impl Backend {
     }
 
     async fn on_solc_diagnostics_update(&self, root: &PathBuf) {
-        if let Some(diagnostics) = self.solc_diagnostics.get(root) {
+        if let Some(diagnostics) = self.state.solc_diagnostics.get(root) {
             // group by file
             let mut map = HashMap::<Url, Vec<&Diagnostic>>::new();
             for diagnostic in diagnostics.iter() {
@@ -319,19 +329,24 @@ impl Backend {
 
     pub async fn update_document_symbols(&self, path: &Url) -> bool {
         if let Ok(symbols) = self.get_document_symbols(path) {
-            self.document_symbols.insert(path.to_string(), symbols);
+            self.state
+                .document_symbols
+                .insert(path.to_string(), symbols);
         }
 
         match self.get_document_symbols(path) {
             Ok(symbols) => {
-                self.document_symbols.insert(path.to_string(), symbols);
-                self.document_diagnostics.remove(&path.to_string());
+                self.state
+                    .document_symbols
+                    .insert(path.to_string(), symbols);
+                self.state.document_diagnostics.remove(&path.to_string());
                 self.on_document_diagnostic_update(path).await;
                 true
             }
             Err(error) => {
                 if let BackendError::SolidityParseError(diagnostics) = error {
-                    self.document_diagnostics
+                    self.state
+                        .document_diagnostics
                         .insert(path.to_string(), diagnostics);
                     self.on_document_diagnostic_update(path).await;
                 }
@@ -346,7 +361,9 @@ impl Backend {
             .paths(ProjectPathsConfig::dapptools(root_path.as_os_str()).unwrap())
             .build()?;
         let output = project.compile()?;
-        self.project_compilation_output.insert(root_path, output);
+        self.state
+            .project_compilation_output
+            .insert(root_path, output);
         Ok(())
     }
 
