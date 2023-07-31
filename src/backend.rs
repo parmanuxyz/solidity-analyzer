@@ -196,7 +196,7 @@ impl BackendState {
     async fn on_solc_diagnostics_update(&self, root: &PathBuf) {
         let grouped = self.get_grouped_diagnostics_by_file(root);
         let mut join_set = JoinSet::new();
-        let grouped_keys: HashSet<Url> = grouped.keys().cloned().into_iter().collect();
+        let grouped_keys: HashSet<Url> = grouped.keys().cloned().collect();
         let already_pushed = self
             .diagnostics_pushed_for
             .read()
@@ -230,7 +230,7 @@ impl BackendState {
             }
         }
 
-        while let Some(_) = join_set.join_next().await {}
+        while join_set.join_next().await.is_some() {}
     }
 }
 
