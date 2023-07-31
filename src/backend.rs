@@ -12,6 +12,7 @@ use dashmap::DashMap;
 use ethers_solc::{artifacts::Severity, Project, ProjectCompileOutput, ProjectPathsConfig};
 use similar::{DiffOp, TextDiff};
 use solang_parser::pt::SourceUnitPart;
+use tokio::task::JoinSet;
 use tower_lsp::{
     lsp_types::{
         ClientCapabilities, Diagnostic, DiagnosticSeverity, DocumentSymbol, NumberOrString,
@@ -24,20 +25,197 @@ use crate::utils;
 #[allow(unused_imports)]
 use crate::{append_to_file, solang::document_symbol::ToDocumentSymbol};
 
-#[derive(Debug, Default)]
+pub enum Job {
+    ComputeSolcDiagnostics(Url),
+}
+
+#[derive(Debug)]
 pub struct BackendState {
     pub documents: DashMap<String, Source>,
     pub document_symbols: DashMap<String, Vec<DocumentSymbol>>,
     pub document_diagnostics: DashMap<String, Vec<solang_parser::diagnostics::Diagnostic>>,
     pub solc_diagnostics: DashMap<PathBuf, Vec<Diagnostic>>,
     pub project_compilation_output: DashMap<PathBuf, ProjectCompileOutput>,
+    pub jobs_sender: tokio::sync::mpsc::Sender<Job>,
+    pub jobs_receiver: tokio::sync::RwLock<tokio::sync::mpsc::Receiver<Job>>,
+    pub client: Client,
+}
+
+impl BackendState {
+    pub fn new(client: Client) -> Self {
+        let (sender, receiver) = tokio::sync::mpsc::channel::<Job>(100);
+
+        Self {
+            jobs_receiver: tokio::sync::RwLock::new(receiver),
+            jobs_sender: sender,
+            documents: Default::default(),
+            document_symbols: Default::default(),
+            document_diagnostics: Default::default(),
+            solc_diagnostics: Default::default(),
+            project_compilation_output: Default::default(),
+            client,
+        }
+    }
+
+    pub async fn process_jobs(&self) {
+        let mut receiver = self.jobs_receiver.write().await;
+        while let Some(job) = receiver.recv().await {
+            match job {
+                Job::ComputeSolcDiagnostics(path) => {
+                    if self.compile_project(&path).is_ok() {
+                        let root = utils::get_root_path(&path).unwrap();
+                        let output = self.project_compilation_output.get(&root).unwrap();
+                        let diagnostics = self.compile_errors_to_diagnostic(&root, output.clone());
+                        if !diagnostics.is_empty() {
+                            self.solc_diagnostics.insert(root.clone(), diagnostics);
+                            self.on_solc_diagnostics_update(&root).await;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    pub async fn queue_job(&self, job: Job) {
+        let sender = self.jobs_sender.clone();
+        sender.send(job).await.unwrap();
+    }
+
+    fn compile_project(&self, path: &Url) -> anyhow::Result<()> {
+        let root_path = utils::get_root_path(path)?;
+        let project = Project::builder()
+            .paths(ProjectPathsConfig::dapptools(root_path.as_os_str()).unwrap())
+            .build()?;
+        let output = project.compile()?;
+        self.project_compilation_output.insert(root_path, output);
+        Ok(())
+    }
+
+    fn compile_errors_to_diagnostic(
+        &self,
+        root: &std::path::Path,
+        output: ProjectCompileOutput,
+    ) -> Vec<Diagnostic> {
+        output
+            .output()
+            .errors
+            .iter()
+            .filter(|err| {
+                err.source_location.is_some()
+                    && (std::path::Path::new(
+                        &root.join(&err.source_location.as_ref().unwrap().file),
+                    )
+                    .exists())
+            })
+            .map(|err| {
+                let severity = match err.severity {
+                    Severity::Error => Some(DiagnosticSeverity::ERROR),
+                    Severity::Warning => Some(DiagnosticSeverity::WARNING),
+                    Severity::Info => Some(DiagnosticSeverity::INFORMATION),
+                };
+                let source_location = err.source_location.as_ref().unwrap();
+                let path = root.join(&source_location.file);
+                let url_string = format!("file://{}", path.to_str().unwrap());
+                let url = Url::parse(&url_string).unwrap();
+                // append_to_file!("/Users/meet/solidity-analyzer.log", "url: {}", url);
+                let file_contents = self.read_file(url).unwrap();
+                let src = Source::new(file_contents);
+                let range = Range {
+                    start: src
+                        .byte_index_to_position(source_location.start as usize)
+                        .unwrap(),
+                    end: src
+                        .byte_index_to_position(source_location.end as usize)
+                        .unwrap(),
+                };
+
+                Diagnostic {
+                    range,
+                    severity,
+                    source: Some("solc".to_string()),
+                    code: err.error_code.map(|x| x as i32).map(NumberOrString::Number),
+                    code_description: None,
+                    message: err.message.clone(),
+                    related_information: None,
+                    tags: None,
+                    data: Some(serde_json::json!({
+                        "url": url_string
+                    })),
+                }
+            })
+            .collect()
+    }
+
+    fn read_file(&self, file_path: Url) -> anyhow::Result<String> {
+        // if the document is owned by client, use the synchronized
+        // copy in server's memory
+        if self.documents.contains_key(&file_path.to_string()) {
+            return Ok(self
+                .documents
+                .get(&file_path.to_string())
+                .unwrap()
+                .text
+                .clone());
+        }
+
+        // read from disk if the document is not owned by client
+        let file_path = utils::url_to_path(&file_path)?;
+        let fsize = metadata(&file_path)?.size();
+        let mut buf = Vec::<u8>::with_capacity(fsize as usize);
+        let mut file = File::open(&file_path)?;
+        file.read_to_end(&mut buf)?;
+        Ok(String::from_utf8_lossy(&buf).into_owned())
+    }
+
+    fn get_grouped_diagnostics_by_file(&self, root: &PathBuf) -> HashMap<Url, Vec<Diagnostic>> {
+        let mut map = HashMap::<Url, Vec<Diagnostic>>::new();
+        if let Some(diagnostics) = self.solc_diagnostics.get(root) {
+            // group by file
+            for diagnostic in diagnostics.iter() {
+                if let Some(data) = &diagnostic.data {
+                    if let Some(url) = data.get("url") {
+                        if let Some(url) = url.as_str() {
+                            let url = Url::parse(url).unwrap();
+                            if let std::collections::hash_map::Entry::Vacant(e) =
+                                map.entry(url.clone())
+                            {
+                                e.insert(vec![diagnostic.clone()]);
+                            } else {
+                                map.get_mut(&url).unwrap().push(diagnostic.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        map
+    }
+
+    async fn on_solc_diagnostics_update(&self, root: &PathBuf) {
+        let grouped = self.get_grouped_diagnostics_by_file(root);
+        let mut join_set = JoinSet::new();
+
+        for (uri, diags) in grouped {
+            if !diags.is_empty() {
+                let client_clone = self.client.clone();
+                // publish diagnostics of all files async
+                join_set.spawn(async move {
+                    client_clone
+                        .publish_diagnostics(uri.clone(), diags, None)
+                        .await
+                });
+            }
+        }
+
+        while let Some(_) = join_set.join_next().await {}
+    }
 }
 
 #[derive(Debug)]
 pub struct Backend {
     pub client: Client,
     pub client_capabilities: OnceLock<ClientCapabilities>,
-    pub state: BackendState,
+    pub state: std::sync::Arc<BackendState>,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -68,7 +246,7 @@ impl Backend {
     pub async fn get_fmt_textedits(&self, file_path: Url) -> anyhow::Result<Option<Vec<TextEdit>>> {
         let config = utils::get_foundry_config(&file_path)?;
         let mut err = None;
-        let file_contents = self.read_file(file_path.clone()).map_err(|_err| {
+        let file_contents = self.state.read_file(file_path.clone()).map_err(|_err| {
             // append_to_file!(
             //     "/Users/meet/solidity-analyzer.log",
             //     "read error on {}: {:?}",
@@ -169,28 +347,6 @@ impl Backend {
         Ok(text_edits)
     }
 
-    fn read_file(&self, file_path: Url) -> anyhow::Result<String> {
-        // if the document is owned by client, use the synchronized
-        // copy in server's memory
-        if self.state.documents.contains_key(&file_path.to_string()) {
-            return Ok(self
-                .state
-                .documents
-                .get(&file_path.to_string())
-                .unwrap()
-                .text
-                .clone());
-        }
-
-        // read from disk if the document is not owned by client
-        let file_path = utils::url_to_path(&file_path)?;
-        let fsize = metadata(&file_path)?.size();
-        let mut buf = Vec::<u8>::with_capacity(fsize as usize);
-        let mut file = File::open(&file_path)?;
-        file.read_to_end(&mut buf)?;
-        Ok(String::from_utf8_lossy(&buf).into_owned())
-    }
-
     pub async fn add_file(&self, file_path: &Url, file_contents: String) {
         self.state
             .documents
@@ -222,109 +378,11 @@ impl Backend {
             }
             _ => {
                 self.update_document_symbols(path).await;
-                if self.compile_project(path).is_ok() {
-                    let root = utils::get_root_path(path).unwrap();
-                    let output = self.state.project_compilation_output.get(&root).unwrap();
-                    let diagnostics = self.compile_errors_to_diagnostic(&root, output.clone());
-                    if !diagnostics.is_empty() {
-                        self.state
-                            .solc_diagnostics
-                            .insert(root.clone(), diagnostics);
-                        self.on_solc_diagnostics_update(&root).await;
-                    }
-                }
+                self.state
+                    .queue_job(Job::ComputeSolcDiagnostics(path.clone()))
+                    .await;
             }
         }
-    }
-
-    async fn on_solc_diagnostics_update(&self, root: &PathBuf) {
-        if let Some(diagnostics) = self.state.solc_diagnostics.get(root) {
-            // group by file
-            let mut map = HashMap::<Url, Vec<&Diagnostic>>::new();
-            for diagnostic in diagnostics.iter() {
-                if let Some(data) = &diagnostic.data {
-                    if let Some(url) = data.get("url") {
-                        if let Some(url) = url.as_str() {
-                            let url = Url::parse(url).unwrap();
-                            if let std::collections::hash_map::Entry::Vacant(e) =
-                                map.entry(url.clone())
-                            {
-                                e.insert(vec![diagnostic]);
-                            } else {
-                                map.get_mut(&url).unwrap().push(diagnostic);
-                            }
-                        }
-                    }
-                }
-            }
-
-            for (uri, diags) in map {
-                if !diags.is_empty() {
-                    self.client
-                        .publish_diagnostics(
-                            uri.clone(),
-                            diags.into_iter().cloned().collect(),
-                            None,
-                        )
-                        .await;
-                }
-            }
-        }
-    }
-
-    fn compile_errors_to_diagnostic(
-        &self,
-        root: &std::path::Path,
-        output: ProjectCompileOutput,
-    ) -> Vec<Diagnostic> {
-        output
-            .output()
-            .errors
-            .iter()
-            .filter(|err| {
-                err.source_location.is_some()
-                    && (std::path::Path::new(
-                        &root.join(&err.source_location.as_ref().unwrap().file),
-                    )
-                    .exists())
-            })
-            .map(|err| {
-                let severity = match err.severity {
-                    Severity::Error => Some(DiagnosticSeverity::ERROR),
-                    Severity::Warning => Some(DiagnosticSeverity::WARNING),
-                    Severity::Info => Some(DiagnosticSeverity::INFORMATION),
-                };
-                let source_location = err.source_location.as_ref().unwrap();
-                let path = root.join(&source_location.file);
-                let url_string = format!("file://{}", path.to_str().unwrap());
-                let url = Url::parse(&url_string).unwrap();
-                // append_to_file!("/Users/meet/solidity-analyzer.log", "url: {}", url);
-                let file_contents = self.read_file(url).unwrap();
-                let src = Source::new(file_contents);
-                let range = Range {
-                    start: src
-                        .byte_index_to_position(source_location.start as usize)
-                        .unwrap(),
-                    end: src
-                        .byte_index_to_position(source_location.end as usize)
-                        .unwrap(),
-                };
-
-                Diagnostic {
-                    range,
-                    severity,
-                    source: Some("solc".to_string()),
-                    code: err.error_code.map(|x| x as i32).map(NumberOrString::Number),
-                    code_description: None,
-                    message: err.message.clone(),
-                    related_information: None,
-                    tags: None,
-                    data: Some(serde_json::json!({
-                        "url": url_string
-                    })),
-                }
-            })
-            .collect()
     }
 
     pub async fn update_document_symbols(&self, path: &Url) -> bool {
@@ -353,18 +411,6 @@ impl Backend {
                 false
             }
         }
-    }
-
-    fn compile_project(&self, path: &Url) -> anyhow::Result<()> {
-        let root_path = utils::get_root_path(path)?;
-        let project = Project::builder()
-            .paths(ProjectPathsConfig::dapptools(root_path.as_os_str()).unwrap())
-            .build()?;
-        let output = project.compile()?;
-        self.state
-            .project_compilation_output
-            .insert(root_path, output);
-        Ok(())
     }
 
     async fn on_document_diagnostic_update(&self, _path: &Url) {
@@ -398,6 +444,7 @@ impl Backend {
         file_path: &Url,
     ) -> Result<Vec<DocumentSymbol>, BackendError> {
         let file_contents = self
+            .state
             .read_file(file_path.clone())
             .map_err(|_| BackendError::ReadError)?;
         let (source_unit, _comments) =

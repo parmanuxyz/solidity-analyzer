@@ -13,6 +13,9 @@ impl LanguageServer for Backend {
             .set(params.capabilities)
             .map_err(|_| Error::new(ErrorCode::InternalError))?;
 
+        let state_clone = self.state.clone();
+        tokio::spawn(async move { state_clone.process_jobs().await });
+
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 document_formatting_provider: Some(OneOf::Left(true)),
