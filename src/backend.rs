@@ -25,6 +25,7 @@ use crate::utils;
 #[allow(unused_imports)]
 use crate::{append_to_file, solang::document_symbol::ToDocumentSymbol};
 
+#[derive(Debug)]
 pub enum Job {
     ComputeSolcDiagnostics(Url),
 }
@@ -64,7 +65,17 @@ impl BackendState {
         while let Some(job) = receiver.recv().await {
             match job {
                 Job::ComputeSolcDiagnostics(path) => {
+                    // append_to_file!(
+                    //     "/Users/meet/solidity-analyzer.log",
+                    //     "compiling project: {:?}",
+                    //     path.to_string()
+                    // );
                     if self.compile_project(&path).is_ok() {
+                        // append_to_file!(
+                        //     "/Users/meet/solidity-analyzer.log",
+                        //     "compiled project: {:?}",
+                        //     path.to_string()
+                        // );
                         let root = utils::get_root_path(&path).unwrap();
                         let output = self.project_compilation_output.get(&root).unwrap();
                         let diagnostics = self.compile_errors_to_diagnostic(&root, output.clone());
@@ -73,12 +84,21 @@ impl BackendState {
                             self.on_solc_diagnostics_update(&root).await;
                         }
                     }
+                    // append_to_file!(
+                    //     "/Users/meet/solidity-analyzer.log",
+                    //     "done compiling project"
+                    // );
                 }
             }
         }
     }
 
     pub async fn queue_job(&self, job: Job) {
+        // append_to_file!(
+        //     "/Users/meet/solidity-analyzer.log",
+        //     "queueing job: {:?}",
+        //     job
+        // );
         let sender = self.jobs_sender.clone();
         sender.send(job).await.unwrap();
     }
@@ -88,7 +108,25 @@ impl BackendState {
         let project = Project::builder()
             .paths(ProjectPathsConfig::dapptools(root_path.as_os_str()).unwrap())
             .build()?;
-        let output = project.compile()?;
+        let mut sources = project.paths.read_input_files()?;
+
+        // overwrite the sources for client owned documents
+        for doc in self.documents.iter() {
+            let key = doc.key().as_str();
+            let val = doc.value();
+            // append_to_file!("/Users/meet/solidity-analyzer.log", "key: {}", key);
+            sources.insert(
+                key.replace("file://", "").to_string().into(),
+                ethers_solc::artifacts::Source::new(val.text.clone()),
+            );
+        }
+
+        // append_to_file!(
+        //     "/Users/meet/solidity-analyzer.log",
+        //     "sources: {:?}",
+        //     sources.keys()
+        // );
+        let output = project.svm_compile(sources)?;
         self.project_compilation_output.insert(root_path, output);
         Ok(())
     }
@@ -204,6 +242,18 @@ impl BackendState {
             .keys()
             .cloned()
             .collect::<HashSet<Url>>();
+        // append_to_file!(
+        //     "/Users/meet/solidity-analyzer.log",
+        //     "grouped_keys: {:?}, already_pushed: {:?}",
+        //     grouped_keys
+        //         .iter()
+        //         .map(|x| x.to_string())
+        //         .collect::<Vec<String>>(),
+        //     already_pushed
+        //         .iter()
+        //         .map(|x| x.to_string())
+        //         .collect::<Vec<String>>()
+        // );
 
         let mut diagnostics_pushed_for = self.diagnostics_pushed_for.write().await;
         // clear fixed/stale diagnostics
@@ -220,6 +270,12 @@ impl BackendState {
             assert!(!diags.is_empty());
             if !diags.is_empty() {
                 let client_clone = self.client.clone();
+                // append_to_file!(
+                //     "/Users/meet/solidity-analyzer.log",
+                //     "publishing diagnostics for {:?}: {:?}",
+                //     uri.to_string(),
+                //     diags
+                // );
                 diagnostics_pushed_for.insert(uri.clone(), true);
                 // publish diagnostics of all files async
                 join_set.spawn(async move {
@@ -394,18 +450,15 @@ impl Backend {
     }
 
     async fn on_file_change(&self, action: FileAction, path: &Url) {
-        match action {
-            FileAction::Close => {
-                self.state.document_symbols.remove(&path.to_string());
-                self.state.document_diagnostics.remove(&path.to_string());
-            }
-            _ => {
-                self.update_document_symbols(path).await;
-                self.state
-                    .queue_job(Job::ComputeSolcDiagnostics(path.clone()))
-                    .await;
-            }
+        if let FileAction::Update = action {
+            self.state.document_symbols.remove(&path.to_string());
+            self.state.document_diagnostics.remove(&path.to_string());
         }
+
+        self.update_document_symbols(path).await;
+        self.state
+            .queue_job(Job::ComputeSolcDiagnostics(path.clone()))
+            .await;
     }
 
     pub async fn update_document_symbols(&self, path: &Url) -> bool {
