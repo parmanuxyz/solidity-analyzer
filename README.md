@@ -6,7 +6,7 @@ for foundry projects with maybe hardhat support(through foundry) in future.
 ## Features
 
 - [x] Formatting (with foundry, same as `forge fmt` while respecting configs)
-- [ ] Diagnostics
+- [x] Diagnostics (compiler errors and warnings on standard dapptools/foundry structure projects work. Optimizations, configurations, perf, etc. yet to come)
 - [x] Outline (could add more details)
 
 ## Language Server
