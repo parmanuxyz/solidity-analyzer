@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt::Debug,
     fs::{metadata, File},
     io::Read,
@@ -38,6 +38,7 @@ pub struct BackendState {
     pub project_compilation_output: DashMap<PathBuf, ProjectCompileOutput>,
     pub jobs_sender: tokio::sync::mpsc::Sender<Job>,
     pub jobs_receiver: tokio::sync::RwLock<tokio::sync::mpsc::Receiver<Job>>,
+    pub diagnostics_pushed_for: tokio::sync::RwLock<HashMap<Url, bool>>,
     pub client: Client,
 }
 
@@ -54,6 +55,7 @@ impl BackendState {
             solc_diagnostics: Default::default(),
             project_compilation_output: Default::default(),
             client,
+            diagnostics_pushed_for: Default::default(),
         }
     }
 
@@ -194,15 +196,36 @@ impl BackendState {
     async fn on_solc_diagnostics_update(&self, root: &PathBuf) {
         let grouped = self.get_grouped_diagnostics_by_file(root);
         let mut join_set = JoinSet::new();
+        let grouped_keys: HashSet<Url> = grouped.keys().cloned().into_iter().collect();
+        let already_pushed = self
+            .diagnostics_pushed_for
+            .read()
+            .await
+            .keys()
+            .cloned()
+            .collect::<HashSet<Url>>();
+
+        let mut diagnostics_pushed_for = self.diagnostics_pushed_for.write().await;
+        // clear fixed/stale diagnostics
+        for url in already_pushed.difference(&grouped_keys) {
+            let client_clone = self.client.clone();
+            let uri = url.clone();
+            join_set.spawn(async move {
+                client_clone.publish_diagnostics(uri, vec![], None).await;
+            });
+            diagnostics_pushed_for.remove(url);
+        }
 
         for (uri, diags) in grouped {
+            assert!(!diags.is_empty());
             if !diags.is_empty() {
                 let client_clone = self.client.clone();
+                diagnostics_pushed_for.insert(uri.clone(), true);
                 // publish diagnostics of all files async
                 join_set.spawn(async move {
                     client_clone
                         .publish_diagnostics(uri.clone(), diags, None)
-                        .await
+                        .await;
                 });
             }
         }
