@@ -128,7 +128,7 @@ impl LanguageServer for Backend {
     ) -> Result<Option<DocumentSymbolResponse>> {
         let file_path: Url = params.text_document.uri;
         self.update_document_symbols(&file_path).await;
-        self.document_symbols.get(file_path.as_str()).map_or(
+        self.state.document_symbols.get(file_path.as_str()).map_or(
             Err(Error::new(ErrorCode::InternalError)),
             |symbols| {
                 // symbols
