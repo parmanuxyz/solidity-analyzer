@@ -1,6 +1,6 @@
 {
   "name": "solidity-analyzer-language-client",
-  "description": "VSCode part of a language server",
+  "description": "Language client extension for solidity-analyzer language server",
   "license": "MIT",
   "version": "0.0.1",
   "engines": {
@@ -25,13 +25,7 @@
           "description": "Path to the solidity-analyzer-ls binary"
         }
       }
-    },
-    "commands": [
-      {
-        "command": "extension.helloworld",
-        "title": "Hello World"
-      }
-    ]
+    }
   },
   "activationEvents": [
     "onStartupFinished"
