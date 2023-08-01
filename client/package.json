@@ -2,7 +2,7 @@
   "name": "solidity-analyzer-language-client-prerelease",
   "description": "Language client extension for solidity-analyzer language server",
   "license": "MIT",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "engines": {
     "vscode": "^1.65.0"
   },
