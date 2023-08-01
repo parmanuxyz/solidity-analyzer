@@ -16,7 +16,7 @@
     "esbuild": "npm run esbuild-base -- --sourcemap",
     "esbuild-watch": "npm run esbuild-base -- --sourcemap --watch"
   },
-  "main": "./out/extension.js",
+  "main": "./out/main.js",
   "contributes": {
     "configuration": {
       "properties": {
