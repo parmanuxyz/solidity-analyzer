@@ -15,7 +15,7 @@
 			"outFiles": [
 				"${workspaceFolder}/client/out/**/*.js"
 			],
-			"preLaunchTask": "npm: watch"
+			"preLaunchTask": "npm: esbuild-watch"
 		}
 	]
 }
