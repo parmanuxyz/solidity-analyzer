@@ -1,5 +1,5 @@
 {
-  "name": "solidity-analyzer-language-client",
+  "name": "solidity-analyzer-language-client-prerelease",
   "description": "Language client extension for solidity-analyzer language server",
   "license": "MIT",
   "version": "0.0.1",

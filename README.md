@@ -22,6 +22,8 @@ Check the [configuration path below](#configuration).
 Open [`extension.ts`](./client/src/extension.ts) in VSCode and run in debug mode
 with <kbd>F5</kbd>.
 
+Install the pre-release from VSCode marketplace [here](https://marketplace.visualstudio.com/items?itemName=parmanu.solidity-analyzer-language-client-prerelease).
+
 ### Configuration
 
 The extension will try to run the language server from the paths in following order:
