@@ -20,14 +20,24 @@ use tower_lsp::{
     },
     Client,
 };
+use tracing::{debug, error, instrument};
 
 use crate::utils;
 #[allow(unused_imports)]
 use crate::{append_to_file, solang::document_symbol::ToDocumentSymbol};
 
-#[derive(Debug)]
 pub enum Job {
     ComputeSolcDiagnostics(Url),
+}
+
+impl std::fmt::Debug for Job {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Job::ComputeSolcDiagnostics(path) => {
+                write!(f, "ComputeSolcDiagnostics({})", path)
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -63,19 +73,14 @@ impl BackendState {
     pub async fn process_jobs(&self) {
         let mut receiver = self.jobs_receiver.write().await;
         while let Some(job) = receiver.recv().await {
+            debug!("processing job: {:?}", job);
             match job {
                 Job::ComputeSolcDiagnostics(path) => {
-                    // append_to_file!(
-                    //     "/Users/meet/solidity-analyzer.log",
-                    //     "compiling project: {:?}",
-                    //     path.to_string()
-                    // );
-                    if self.compile_project(&path).is_ok() {
-                        // append_to_file!(
-                        //     "/Users/meet/solidity-analyzer.log",
-                        //     "compiled project: {:?}",
-                        //     path.to_string()
-                        // );
+                    let compile_result = self.compile_project(&path);
+                    if let Err(err) = &compile_result {
+                        error!(err = ?err, "compile error");
+                    }
+                    if compile_result.is_ok() {
                         #[allow(clippy::unwrap_used)]
                         let root = utils::get_root_path(&path).unwrap();
 
@@ -84,30 +89,33 @@ impl BackendState {
                         let output = self.project_compilation_output.get(&root).unwrap();
                         let diagnostics = self.compile_errors_to_diagnostic(&root, output.clone());
                         if !diagnostics.is_empty() {
+                            debug!(
+                                diagnostics = ?diagnostics
+                                    .iter()
+                                    .map(crate::utils::diagnostic_to_string)
+                                    .collect::<Vec<String>>(),
+                                "diagnostics found"
+                            );
                             self.solc_diagnostics.insert(root.clone(), diagnostics);
                             self.on_solc_diagnostics_update(&root).await;
                         }
                     }
-                    // append_to_file!(
-                    //     "/Users/meet/solidity-analyzer.log",
-                    //     "done compiling project"
-                    // );
                 }
             }
         }
     }
 
+    #[instrument(skip_all)]
     pub async fn queue_job(&self, job: Job) -> anyhow::Result<()> {
-        // append_to_file!(
-        //     "/Users/meet/solidity-analyzer.log",
-        //     "queueing job: {:?}",
-        //     job
-        // );
+        debug!(job = ?job, "queueing job");
+
         let sender = self.jobs_sender.clone();
         Ok(sender.send(job).await?)
     }
 
+    #[instrument(skip_all)]
     fn compile_project(&self, path: &Url) -> anyhow::Result<()> {
+        debug!(path = path.to_string(), "compiling project");
         let root_path = utils::get_root_path(path)?;
         let project = Project::builder()
             .paths(ProjectPathsConfig::dapptools(root_path.as_os_str())?)
@@ -118,18 +126,13 @@ impl BackendState {
         for doc in self.documents.iter() {
             let key = doc.key().as_str();
             let val = doc.value();
-            // append_to_file!("/Users/meet/solidity-analyzer.log", "key: {}", key);
+            debug!(path = key, "patching client owned docs in source");
             sources.insert(
                 key.replace("file://", "").to_string().into(),
                 ethers_solc::artifacts::Source::new(val.text.clone()),
             );
         }
 
-        // append_to_file!(
-        //     "/Users/meet/solidity-analyzer.log",
-        //     "sources: {:?}",
-        //     sources.keys()
-        // );
         let output = project.svm_compile(sources)?;
         self.project_compilation_output.insert(root_path, output);
         Ok(())
@@ -145,7 +148,7 @@ impl BackendState {
             .errors
             .iter()
             .filter(|err| {
-                err.source_location.is_some()
+                let processable = err.source_location.is_some()
                     && (std::path::Path::new(
                         // okay because already checked if is_some
                         #[allow(clippy::unwrap_used)]
@@ -158,7 +161,15 @@ impl BackendState {
                         root.join(&err.source_location.as_ref().unwrap().file)
                             .to_str()
                             .is_some()
-                    })
+                    });
+                if !processable {
+                    debug!(
+                        err = ?err,
+                        "solc error not processable"
+                    );
+                }
+
+                processable
             })
             .map(|err| -> anyhow::Result<Diagnostic> {
                 let severity = match err.severity {
@@ -175,7 +186,6 @@ impl BackendState {
                 #[allow(clippy::unwrap_used)]
                 let url_string = format!("file://{}", path.to_str().unwrap());
                 let url = Url::parse(&url_string)?;
-                // append_to_file!("/Users/meet/solidity-analyzer.log", "url: {}", url);
                 let file_contents = self.read_file(url)?;
                 let src = Source::new(file_contents);
                 let range = Range {
@@ -229,12 +239,7 @@ impl BackendState {
         if let Some(diagnostics) = self.solc_diagnostics.get(root) {
             // group by file
             for diagnostic in diagnostics.iter() {
-                if let Some(url) = diagnostic
-                    .data
-                    .as_ref()
-                    .and_then(|data| data.get("url").and_then(|url| url.as_str()))
-                    .and_then(|url| Url::parse(url).ok())
-                {
+                if let Some(url) = diagnostic_file_url(diagnostic) {
                     if let std::collections::hash_map::Entry::Vacant(e) = map.entry(url.clone()) {
                         e.insert(vec![diagnostic.clone()]);
                     } else {
@@ -248,6 +253,7 @@ impl BackendState {
         map
     }
 
+    #[instrument(skip_all)]
     async fn on_solc_diagnostics_update(&self, root: &PathBuf) {
         let grouped = self.get_grouped_diagnostics_by_file(root);
         let mut join_set = JoinSet::new();
@@ -259,17 +265,16 @@ impl BackendState {
             .keys()
             .cloned()
             .collect::<HashSet<Url>>();
-        // append_to_file!(
-        //     "/Users/meet/solidity-analyzer.log",
-        //     "grouped_keys: {:?}, already_pushed: {:?}",
-        //     grouped_keys
+        // debug!(
+        //     grouped_keys = ?grouped_keys
         //         .iter()
         //         .map(|x| x.to_string())
         //         .collect::<Vec<String>>(),
-        //     already_pushed
+        //     already_pushed = ?already_pushed
         //         .iter()
         //         .map(|x| x.to_string())
-        //         .collect::<Vec<String>>()
+        //         .collect::<Vec<String>>(),
+        //     "grouped keys and already pushed keys"
         // );
 
         let mut diagnostics_pushed_for = self.diagnostics_pushed_for.write().await;
@@ -287,12 +292,7 @@ impl BackendState {
             assert!(!diags.is_empty());
             if !diags.is_empty() {
                 let client_clone = self.client.clone();
-                // append_to_file!(
-                //     "/Users/meet/solidity-analyzer.log",
-                //     "publishing diagnostics for {:?}: {:?}",
-                //     uri.to_string(),
-                //     diags
-                // );
+                debug!(uri = uri.to_string(), "publishing diagnostics for");
                 diagnostics_pushed_for.insert(uri.clone(), true);
                 // publish diagnostics of all files async
                 join_set.spawn(async move {
@@ -341,16 +341,12 @@ enum FileAction {
 }
 
 impl Backend {
+    #[instrument(skip_all)]
     pub async fn get_fmt_textedits(&self, file_path: Url) -> anyhow::Result<Option<Vec<TextEdit>>> {
         let config = utils::get_foundry_config(&file_path)?;
         let mut err = None;
         let file_contents = self.state.read_file(file_path.clone()).map_err(|_err| {
-            // append_to_file!(
-            //     "/Users/meet/solidity-analyzer.log",
-            //     "read error on {}: {:?}",
-            //     file_path,
-            //     err
-            // );
+            debug!(file_path = file_path.to_string(), err = ?err, "read error");
             BackendError::ReadError
         })?;
         let parsed_src = forge_fmt::parse(&file_contents).map_err(|err_| {
@@ -368,12 +364,6 @@ impl Backend {
         forge_fmt::format(&mut formatted_txt, parsed_src, config.fmt)
             .map_err(|_| BackendError::FormatError)?;
         let formatted_txt_lines = formatted_txt.lines().collect::<Vec<&str>>();
-
-        // crate::append_to_file!(
-        //     "/Users/meet/solidity-analyzer.log",
-        //     "formatted_txt: {:?}",
-        //     formatted_txt
-        // );
 
         let diff: TextDiff<'_, '_, '_, str> = TextDiff::from_lines(&file_contents, &formatted_txt);
         let text_edits = diff
@@ -670,6 +660,14 @@ impl Source {
         let end = self.position_to_byte_index(&range.end)?;
         Ok(self.text[start..end].to_string())
     }
+}
+
+pub fn diagnostic_file_url(diagnostic: &Diagnostic) -> Option<Url> {
+    diagnostic
+        .data
+        .as_ref()
+        .and_then(|data| data.get("url").and_then(|url| url.as_str()))
+        .and_then(|url| Url::parse(url).ok())
 }
 
 #[allow(clippy::unwrap_used)]

@@ -5,6 +5,7 @@ use crate::backend::Backend;
 use tower_lsp::jsonrpc::{Error, ErrorCode, Result};
 use tower_lsp::lsp_types::*;
 use tower_lsp::LanguageServer;
+use tracing::{debug, instrument};
 
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
@@ -41,17 +42,15 @@ impl LanguageServer for Backend {
             .await;
     }
 
+    #[instrument(skip_all)]
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         let file_path: Url = params.text_document.uri;
-        // append_to_file!(
-        //     "/Users/meet/solidity-analyzer.log",
-        //     "did_open request for {file_path}"
-        // );
-        // append_to_file!(
-        //     "/Users/meet/solidity-analyzer.log",
-        //     "did_open request for {file_path} and {:?}",
-        //     params.text_document.language_id
-        // );
+        debug!(
+            "did_open request for {file_path}, lang: {lang_id}",
+            file_path = file_path.to_string(),
+            lang_id = params.text_document.language_id
+        );
+
         let text = params.text_document.text;
         self.client
             .log_message(
@@ -62,13 +61,13 @@ impl LanguageServer for Backend {
         self.add_file(&file_path, text).await;
     }
 
+    #[instrument(skip_all)]
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         let file_path: Url = params.text_document.uri;
-        // append_to_file!(
-        //     "/Users/meet/solidity-analyzer.log",
-        //     "did_change request for {file_path}: {:#?}",
-        //     params.content_changes
-        // );
+        debug!(
+            "did_change request for {file_path}",
+            file_path = file_path.to_string()
+        );
 
         for content_change in params.content_changes {
             match content_change.range {
@@ -137,10 +136,10 @@ impl LanguageServer for Backend {
                 // symbols
                 //     .iter()
                 //     .map(|sym| {
-                //         append_to_file!(
-                //             "/Users/meet/solidity-analyzer.log",
-                //             "document_symbol request for {file_path}: {:#?}",
-                //             sym
+                //         debug!(
+                //             "document_symbol request for {file_path}: {sym}",
+                //             file_path = file_path.to_string(),
+                //             sym = format!("{:?}", sym),
                 //         );
                 //     })
                 //     .collect::<Vec<()>>();

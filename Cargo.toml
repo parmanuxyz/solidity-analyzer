@@ -17,3 +17,5 @@ thiserror = "1.0.44"
 dashmap = "5.5.0"
 solang-parser = "0.3.1"
 serde_json = "1.0.103"
+tracing = "0.1.37"
+tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
