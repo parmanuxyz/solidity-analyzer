@@ -2,7 +2,8 @@ use std::default::Default;
 use std::path::PathBuf;
 
 use foundry_config::{figment::Figment, Config, RootPath};
-use tower_lsp::lsp_types::Url;
+use tower_lsp::lsp_types::{Diagnostic, Position, Range, Url};
+use tracing::{debug, instrument};
 
 use crate::backend::BackendError;
 
@@ -16,16 +17,13 @@ pub fn url_to_path(url: &Url) -> Result<PathBuf, BackendError> {
     }
 }
 
+#[instrument(skip_all)]
 pub fn get_foundry_config(url: &Url) -> Result<Config, BackendError> {
     let path = url_to_path(url)?;
     let parent = path.parent().ok_or(BackendError::OptionUnwrap)?;
     let root_path = get_root_path(url).or(Ok(parent.to_path_buf()))?;
+    debug!(root_path = ?root_path.to_string_lossy(), url = url.to_string(), "root path found");
 
-    // crate::append_to_file!(
-    //     "/Users/meet/solidity-analyzer.log",
-    //     "root_path: {:?}",
-    //     root_path
-    // );
     let config = Config::from_provider(Into::<Figment>::into(Config {
         __root: RootPath(root_path),
         ..Default::default()
@@ -63,6 +61,41 @@ macro_rules! append_to_file {
             });
         }
     };
+}
+
+pub fn position_to_string(position: &Position) -> String {
+    format!("{}:{}", position.line + 1, position.character + 1)
+}
+
+pub fn range_to_string(range: &Range) -> String {
+    format!(
+        "{}..{}",
+        position_to_string(&range.start),
+        position_to_string(&range.end)
+    )
+}
+
+pub fn diagnostic_to_string(diagnostic: &Diagnostic) -> String {
+    format!(
+        "{source}[{error_code}][{file_name}][{range}] {message}",
+        source = diagnostic
+            .source
+            .as_ref()
+            .unwrap_or(&"-".to_string())
+            .clone(),
+        error_code = diagnostic
+            .code
+            .as_ref()
+            .map_or("-".into(), |code| match code {
+                tower_lsp::lsp_types::NumberOrString::Number(code) => code.to_string(),
+                tower_lsp::lsp_types::NumberOrString::String(code) => code.clone(),
+            }),
+        range = range_to_string(&diagnostic.range),
+        file_name = crate::backend::diagnostic_file_url(diagnostic)
+            .map(|url| url.to_string())
+            .unwrap_or("UNKNOWN".to_string()),
+        message = diagnostic.message,
+    )
 }
 
 #[allow(clippy::unwrap_used)]

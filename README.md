@@ -29,7 +29,7 @@ for foundry projects with maybe hardhat support(through foundry) in future.
 $ cargo b
 ```
 
-Check the [configuration path below](#configuration).
+Check the [configuration path below](#configuration). Logs are located in `~/solidity-analyzer.log`
 
 ## Extension
 
