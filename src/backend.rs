@@ -76,7 +76,11 @@ impl BackendState {
                         //     "compiled project: {:?}",
                         //     path.to_string()
                         // );
+                        #[allow(clippy::unwrap_used)]
                         let root = utils::get_root_path(&path).unwrap();
+
+                        // is okay because this branch will only execute if okay and inserted
+                        #[allow(clippy::unwrap_used)]
                         let output = self.project_compilation_output.get(&root).unwrap();
                         let diagnostics = self.compile_errors_to_diagnostic(&root, output.clone());
                         if !diagnostics.is_empty() {
@@ -93,20 +97,20 @@ impl BackendState {
         }
     }
 
-    pub async fn queue_job(&self, job: Job) {
+    pub async fn queue_job(&self, job: Job) -> anyhow::Result<()> {
         // append_to_file!(
         //     "/Users/meet/solidity-analyzer.log",
         //     "queueing job: {:?}",
         //     job
         // );
         let sender = self.jobs_sender.clone();
-        sender.send(job).await.unwrap();
+        Ok(sender.send(job).await?)
     }
 
     fn compile_project(&self, path: &Url) -> anyhow::Result<()> {
         let root_path = utils::get_root_path(path)?;
         let project = Project::builder()
-            .paths(ProjectPathsConfig::dapptools(root_path.as_os_str()).unwrap())
+            .paths(ProjectPathsConfig::dapptools(root_path.as_os_str())?)
             .build()?;
         let mut sources = project.paths.read_input_files()?;
 
@@ -143,33 +147,43 @@ impl BackendState {
             .filter(|err| {
                 err.source_location.is_some()
                     && (std::path::Path::new(
+                        // okay because already checked if is_some
+                        #[allow(clippy::unwrap_used)]
                         &root.join(&err.source_location.as_ref().unwrap().file),
                     )
                     .exists())
+                    && ({
+                        // okay because already checked if is_some
+                        #[allow(clippy::unwrap_used)]
+                        root.join(&err.source_location.as_ref().unwrap().file)
+                            .to_str()
+                            .is_some()
+                    })
             })
-            .map(|err| {
+            .map(|err| -> anyhow::Result<Diagnostic> {
                 let severity = match err.severity {
                     Severity::Error => Some(DiagnosticSeverity::ERROR),
                     Severity::Warning => Some(DiagnosticSeverity::WARNING),
                     Severity::Info => Some(DiagnosticSeverity::INFORMATION),
                 };
+
+                // already checked and filtered out none values
+                #[allow(clippy::unwrap_used)]
                 let source_location = err.source_location.as_ref().unwrap();
                 let path = root.join(&source_location.file);
+                // okay because already checked if is_some
+                #[allow(clippy::unwrap_used)]
                 let url_string = format!("file://{}", path.to_str().unwrap());
-                let url = Url::parse(&url_string).unwrap();
+                let url = Url::parse(&url_string)?;
                 // append_to_file!("/Users/meet/solidity-analyzer.log", "url: {}", url);
-                let file_contents = self.read_file(url).unwrap();
+                let file_contents = self.read_file(url)?;
                 let src = Source::new(file_contents);
                 let range = Range {
-                    start: src
-                        .byte_index_to_position(source_location.start as usize)
-                        .unwrap(),
-                    end: src
-                        .byte_index_to_position(source_location.end as usize)
-                        .unwrap(),
+                    start: src.byte_index_to_position(source_location.start as usize)?,
+                    end: src.byte_index_to_position(source_location.end as usize)?,
                 };
 
-                Diagnostic {
+                Ok(Diagnostic {
                     range,
                     severity,
                     source: Some("solc".to_string()),
@@ -181,8 +195,9 @@ impl BackendState {
                     data: Some(serde_json::json!({
                         "url": url_string
                     })),
-                }
+                })
             })
+            .filter_map(anyhow::Result::ok)
             .collect()
     }
 
@@ -190,6 +205,8 @@ impl BackendState {
         // if the document is owned by client, use the synchronized
         // copy in server's memory
         if self.documents.contains_key(&file_path.to_string()) {
+            // okay to unwrap because already checked if contains key
+            #[allow(clippy::unwrap_used)]
             return Ok(self
                 .documents
                 .get(&file_path.to_string())
@@ -212,18 +229,18 @@ impl BackendState {
         if let Some(diagnostics) = self.solc_diagnostics.get(root) {
             // group by file
             for diagnostic in diagnostics.iter() {
-                if let Some(data) = &diagnostic.data {
-                    if let Some(url) = data.get("url") {
-                        if let Some(url) = url.as_str() {
-                            let url = Url::parse(url).unwrap();
-                            if let std::collections::hash_map::Entry::Vacant(e) =
-                                map.entry(url.clone())
-                            {
-                                e.insert(vec![diagnostic.clone()]);
-                            } else {
-                                map.get_mut(&url).unwrap().push(diagnostic.clone());
-                            }
-                        }
+                if let Some(url) = diagnostic
+                    .data
+                    .as_ref()
+                    .and_then(|data| data.get("url").and_then(|url| url.as_str()))
+                    .and_then(|url| Url::parse(url).ok())
+                {
+                    if let std::collections::hash_map::Entry::Vacant(e) = map.entry(url.clone()) {
+                        e.insert(vec![diagnostic.clone()]);
+                    } else {
+                        // okay because already checked if is_some
+                        #[allow(clippy::unwrap_used)]
+                        map.get_mut(&url).unwrap().push(diagnostic.clone());
                     }
                 }
             }
@@ -313,6 +330,8 @@ pub enum BackendError {
     PositionNotFoundError,
     #[error("Invalid location error")]
     InvalidLocationError,
+    #[error("Option unwrap error")]
+    OptionUnwrap,
 }
 
 enum FileAction {
@@ -456,9 +475,14 @@ impl Backend {
         }
 
         self.update_document_symbols(path).await;
-        self.state
+        if self
+            .state
             .queue_job(Job::ComputeSolcDiagnostics(path.clone()))
-            .await;
+            .await
+            .is_err()
+        {
+            // TODO: log something somewhere
+        }
     }
 
     pub async fn update_document_symbols(&self, path: &Url) -> bool {
@@ -641,13 +665,14 @@ impl Source {
     }
 
     #[allow(dead_code)]
-    fn get_range_substring(&self, range: &tower_lsp::lsp_types::Range) -> String {
-        let start = self.position_to_byte_index(&range.start).unwrap();
-        let end = self.position_to_byte_index(&range.end).unwrap();
-        self.text[start..end].to_string()
+    fn get_range_substring(&self, range: &tower_lsp::lsp_types::Range) -> anyhow::Result<String> {
+        let start = self.position_to_byte_index(&range.start)?;
+        let end = self.position_to_byte_index(&range.end)?;
+        Ok(self.text[start..end].to_string())
     }
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;
