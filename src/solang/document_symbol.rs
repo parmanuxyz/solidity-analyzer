@@ -62,13 +62,18 @@ impl ToDocumentSymbol for EnumDefinition {
                 self.values
                     .iter()
                     .filter(|x| x.is_some())
-                    .map(|enum_value| DocumentSymbol {
-                        kind: SymbolKind::ENUM_MEMBER,
-                        // okay to unwrap because filtered Nones
-                        ..enum_value
+                    .map(|enum_value| {
+                        #[allow(clippy::unwrap_used)]
+                        let doc_symbol = enum_value
                             .as_ref()
                             .unwrap()
-                            .to_document_symbol_with_loc(source)
+                            .to_document_symbol_with_loc(source);
+
+                        DocumentSymbol {
+                            kind: SymbolKind::ENUM_MEMBER,
+                            // okay to unwrap because filtered Nones
+                            ..doc_symbol
+                        }
                     })
                     .collect::<Vec<DocumentSymbol>>(),
             )

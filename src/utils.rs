@@ -17,8 +17,9 @@ pub fn url_to_path(url: &Url) -> Result<PathBuf, BackendError> {
 }
 
 pub fn get_foundry_config(url: &Url) -> Result<Config, BackendError> {
-    let root_path =
-        get_root_path(url).or(Ok((url_to_path(url)?.parent().unwrap()).to_path_buf()))?;
+    let path = url_to_path(url)?;
+    let parent = path.parent().ok_or(BackendError::OptionUnwrap)?;
+    let root_path = get_root_path(url).or(Ok(parent.to_path_buf()))?;
 
     // crate::append_to_file!(
     //     "/Users/meet/solidity-analyzer.log",
@@ -35,7 +36,10 @@ pub fn get_foundry_config(url: &Url) -> Result<Config, BackendError> {
 
 pub fn get_root_path(path: &Url) -> anyhow::Result<PathBuf> {
     let path = url_to_path(path)?;
-    let dir = path.parent().unwrap().to_path_buf();
+    let dir = path
+        .parent()
+        .ok_or(BackendError::OptionUnwrap)?
+        .to_path_buf();
     Ok(foundry_config::find_project_root_path(Some(&dir))?)
 }
 
@@ -61,6 +65,7 @@ macro_rules! append_to_file {
     };
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;
