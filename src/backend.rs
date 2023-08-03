@@ -77,9 +77,7 @@ impl BackendState {
             match job {
                 Job::ComputeSolcDiagnostics(path) => {
                     let compile_result = self.compile_project(&path);
-                    if let Err(err) = &compile_result {
-                        error!(err = ?err, "compile error");
-                    }
+                    debug!(res = ?compile_result, "compiling finished");
                     if compile_result.is_ok() {
                         #[allow(clippy::unwrap_used)]
                         let root = utils::get_root_path(&path).unwrap();
@@ -88,17 +86,15 @@ impl BackendState {
                         #[allow(clippy::unwrap_used)]
                         let output = self.project_compilation_output.get(&root).unwrap();
                         let diagnostics = self.compile_errors_to_diagnostic(&root, output.clone());
-                        if !diagnostics.is_empty() {
-                            debug!(
-                                diagnostics = ?diagnostics
-                                    .iter()
-                                    .map(crate::utils::diagnostic_to_string)
-                                    .collect::<Vec<String>>(),
-                                "diagnostics found"
-                            );
-                            self.solc_diagnostics.insert(root.clone(), diagnostics);
-                            self.on_solc_diagnostics_update(&root).await;
-                        }
+                        debug!(
+                            diagnostics = ?diagnostics
+                                .iter()
+                                .map(crate::utils::diagnostic_to_string)
+                                .collect::<Vec<String>>(),
+                            "diagnostics found"
+                        );
+                        self.solc_diagnostics.insert(root.clone(), diagnostics);
+                        self.on_solc_diagnostics_update(&root).await;
                     }
                 }
             }
@@ -282,25 +278,31 @@ impl BackendState {
         for url in already_pushed.difference(&grouped_keys) {
             let client_clone = self.client.clone();
             let uri = url.clone();
+            debug!("clearing diagnostics for: {}", uri.to_string());
             join_set.spawn(async move {
                 client_clone.publish_diagnostics(uri, vec![], None).await;
             });
-            diagnostics_pushed_for.remove(url);
+            // diagnostics_pushed_for.remove(url);
         }
 
         for (uri, diags) in grouped {
             assert!(!diags.is_empty());
-            if !diags.is_empty() {
-                let client_clone = self.client.clone();
-                debug!(uri = uri.to_string(), "publishing diagnostics for");
-                diagnostics_pushed_for.insert(uri.clone(), true);
-                // publish diagnostics of all files async
-                join_set.spawn(async move {
-                    client_clone
-                        .publish_diagnostics(uri.clone(), diags, None)
-                        .await;
-                });
-            }
+            let client_clone = self.client.clone();
+            debug!(
+                uri = uri.to_string(),
+                diags = ?diags
+                    .iter()
+                    .map(crate::utils::diagnostic_to_string)
+                    .collect::<Vec<String>>(),
+                "publishing diagnostics for"
+            );
+            diagnostics_pushed_for.insert(uri.clone(), true);
+            // publish diagnostics of all files async
+            join_set.spawn(async move {
+                client_clone
+                    .publish_diagnostics(uri.clone(), diags, None)
+                    .await;
+            });
         }
 
         while join_set.join_next().await.is_some() {}
