@@ -203,7 +203,12 @@ impl BackendState {
                     })),
                 })
             })
-            .filter_map(anyhow::Result::ok)
+            .filter_map(|res| {
+                if res.is_err() {
+                    error!(err = ?res, "error converting solc error to diagnostic");
+                }
+                res.ok()
+            })
             .collect()
     }
 
