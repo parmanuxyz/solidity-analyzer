@@ -10,7 +10,7 @@ use std::{
 
 use dashmap::DashMap;
 use ethers_solc::{
-    artifacts::{SecondarySourceLocation, Severity},
+    artifacts::{SecondarySourceLocation, Severity, SourceLocation},
     Project, ProjectCompileOutput, ProjectPathsConfig,
 };
 use similar::{DiffOp, TextDiff};
@@ -188,10 +188,21 @@ impl BackendState {
                 let file_contents = self.read_file(url)?;
                 let src = Source::new(file_contents);
                 debug!(err = ?err, "error");
-                let range = Range {
-                    start: src.byte_index_to_position(source_location.start as usize)?,
-                    end: src.byte_index_to_position(source_location.end as usize)?,
-                };
+
+                let source_location_to_range =
+                    |src: &Source, source_location: &SourceLocation| -> anyhow::Result<Range> {
+                        let index_to_position = |index| -> anyhow::Result<Position> {
+                            if index > 0 {
+                                Ok(src.byte_index_to_position(index as usize)?)
+                            } else {
+                                Ok(Position::default())
+                            }
+                        };
+                        Ok(Range {
+                            start: index_to_position(source_location.start)?,
+                            end: index_to_position(source_location.end)?,
+                        })
+                    };
 
                 let related_informations = err
                     .secondary_source_locations
@@ -214,11 +225,15 @@ impl BackendState {
                                     if let Ok(file_contents) = self.read_file(url.clone()) {
                                         let src = Source::new(file_contents);
                                         debug!(err = ?err, "error");
-                                        if let (Ok(start), Ok(end)) = (
-                                            src.byte_index_to_position(*start as usize),
-                                            src.byte_index_to_position(*end as usize),
+                                        if let Ok(range) = source_location_to_range(
+                                            &src,
+                                            &SourceLocation {
+                                                file: "".to_string(),
+                                                start: *start,
+                                                end: *end,
+                                            },
                                         ) {
-                                            return Some((url, message.clone(), start, end));
+                                            return Some((url, message.clone(), range));
                                         }
                                     }
                                 }
@@ -231,17 +246,14 @@ impl BackendState {
                         );
                         None
                     })
-                    .map(|(file, message, start, end)| DiagnosticRelatedInformation {
-                        location: Location {
-                            uri: file,
-                            range: Range { start, end },
-                        },
+                    .map(|(file, message, range)| DiagnosticRelatedInformation {
+                        location: Location { uri: file, range },
                         message,
                     })
                     .collect::<Vec<DiagnosticRelatedInformation>>();
 
                 let primary_diagnostic = Diagnostic {
-                    range,
+                    range: source_location_to_range(&src, source_location)?,
                     severity,
                     source: Some("solc".to_string()),
                     code: err.error_code.map(|x| x as i32).map(NumberOrString::Number),
