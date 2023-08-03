@@ -9,14 +9,17 @@ use std::{
 };
 
 use dashmap::DashMap;
-use ethers_solc::{artifacts::Severity, Project, ProjectCompileOutput, ProjectPathsConfig};
+use ethers_solc::{
+    artifacts::{SecondarySourceLocation, Severity},
+    Project, ProjectCompileOutput, ProjectPathsConfig,
+};
 use similar::{DiffOp, TextDiff};
 use solang_parser::pt::SourceUnitPart;
 use tokio::task::JoinSet;
 use tower_lsp::{
     lsp_types::{
-        ClientCapabilities, Diagnostic, DiagnosticSeverity, DocumentSymbol, NumberOrString,
-        Position, Range, TextEdit, Url,
+        ClientCapabilities, Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity,
+        DocumentSymbol, Location, NumberOrString, Position, Range, TextEdit, Url,
     },
     Client,
 };
@@ -184,24 +187,78 @@ impl BackendState {
                 let url = Url::parse(&url_string)?;
                 let file_contents = self.read_file(url)?;
                 let src = Source::new(file_contents);
+                debug!(err = ?err, "error");
                 let range = Range {
                     start: src.byte_index_to_position(source_location.start as usize)?,
                     end: src.byte_index_to_position(source_location.end as usize)?,
                 };
 
-                Ok(Diagnostic {
+                let related_informations = err
+                    .secondary_source_locations
+                    .iter()
+                    .filter_map(|secondary_loc| {
+                        if let SecondarySourceLocation {
+                            start: Some(start),
+                            end: Some(end),
+                            file: Some(file),
+                            message: Some(message),
+                        } = secondary_loc
+                        {
+                            let path = {
+                                let fpath = root.join(file);
+                                fpath.to_str().map(|p| format!("{}", p))
+                            };
+                            if let Some(path) = path {
+                                let url_string = format!("file://{}", path);
+                                if let Ok(url) = Url::parse(&url_string) {
+                                    if let Ok(file_contents) = self.read_file(url.clone()) {
+                                        let src = Source::new(file_contents);
+                                        debug!(err = ?err, "error");
+                                        if let (Ok(start), Ok(end)) = (
+                                            src.byte_index_to_position(*start as usize),
+                                            src.byte_index_to_position(*end as usize),
+                                        ) {
+                                            return Some((url, message.clone(), start, end));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        debug!(
+                            secondary_loc = ?secondary_loc,
+                            "secondary location not processable"
+                        );
+                        None
+                    })
+                    .map(|(file, message, start, end)| DiagnosticRelatedInformation {
+                        location: Location {
+                            uri: file,
+                            range: Range { start, end },
+                        },
+                        message,
+                    })
+                    .collect::<Vec<DiagnosticRelatedInformation>>();
+
+                let primary_diagnostic = Diagnostic {
                     range,
                     severity,
                     source: Some("solc".to_string()),
                     code: err.error_code.map(|x| x as i32).map(NumberOrString::Number),
                     code_description: None,
                     message: err.message.clone(),
-                    related_information: None,
+                    related_information: if related_informations.is_empty() {
+                        None
+                    } else {
+                        Some(related_informations)
+                    },
                     tags: None,
                     data: Some(serde_json::json!({
                         "url": url_string
                     })),
-                })
+                };
+
+                Ok(primary_diagnostic)
             })
             .filter_map(|res| {
                 if res.is_err() {
@@ -614,6 +671,7 @@ impl Source {
         }
     }
 
+    #[instrument]
     pub fn byte_index_to_position(
         &self,
         index: usize,
@@ -631,6 +689,7 @@ impl Source {
             }
             chars_read += line_length + 1; // for \n
         }
+        error!("position not found");
         Err(BackendError::PositionNotFoundError)
     }
 
