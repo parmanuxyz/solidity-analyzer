@@ -478,7 +478,7 @@ impl Backend {
                         },
                         end: Position {
                             line: (*old_index + *old_len) as u32,
-                            character: u32::MAX,
+                            character: 0,
                         },
                     },
                     new_text: "".to_string(),
