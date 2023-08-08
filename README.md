@@ -13,13 +13,8 @@ for foundry projects with maybe hardhat support(through foundry) in future.
 
 1. Install the language server:
    ```bash
-   # select the nightly toolchain
-   rustup override set nightly
-   # or make nightly default
-   rustup default nightly
-   # install the language server
-   cargo install --git https://github.com/parmanuxyz/solidity-analyzer --bin solidity-analyzer-ls
    # ensure that ~/.cargo/bin is in your path for the extension to be able to find it
+   cargo install +nightly --git https://github.com/parmanuxyz/solidity-analyzer --bin solidity-analyzer-ls
    ```
 2. Install the companion vscode prerelease extension [from the marketplace](https://marketplace.visualstudio.com/items?itemName=parmanu.solidity-analyzer-language-client-prerelease)
 
