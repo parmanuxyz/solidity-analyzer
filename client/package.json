@@ -25,10 +25,23 @@
           "description": "Path to the solidity-analyzer-ls binary"
         }
       }
-    }
+    },
+    "languages": [
+      {
+        "id": "solidity",
+        "extensions": [
+          ".sol"
+        ]
+      }
+    ]
   },
+  "categories": [
+    "Formatters",
+    "Linters",
+    "Programming Languages"
+  ],
   "activationEvents": [
-    "onStartupFinished"
+    "onLanguage:solidity"
   ],
   "dependencies": {
     "vscode-languageclient": "^8.1.0"
