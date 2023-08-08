@@ -9,9 +9,10 @@ use std::{
 };
 
 use dashmap::DashMap;
-use ethers_solc::{
+use foundry_config::ethers_solc::{
+    self,
     artifacts::{SecondarySourceLocation, Severity, SourceLocation},
-    Project, ProjectCompileOutput, ProjectPathsConfig,
+    ProjectCompileOutput,
 };
 use similar::{DiffOp, TextDiff};
 use solang_parser::pt::SourceUnitPart;
@@ -116,9 +117,8 @@ impl BackendState {
     fn compile_project(&self, path: &Url) -> anyhow::Result<()> {
         debug!(path = path.to_string(), "compiling project");
         let root_path = utils::get_root_path(path)?;
-        let project = Project::builder()
-            .paths(ProjectPathsConfig::dapptools(root_path.as_os_str())?)
-            .build()?;
+        let config = utils::get_foundry_config(path)?;
+        let project = config.project()?;
         let mut sources = project.paths.read_input_files()?;
 
         // overwrite the sources for client owned documents
