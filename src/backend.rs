@@ -552,12 +552,6 @@ impl Backend {
     }
 
     pub async fn update_document_symbols(&self, path: &Url) -> bool {
-        if let Ok(symbols) = self.get_document_symbols(path) {
-            self.state
-                .document_symbols
-                .insert(path.to_string(), symbols);
-        }
-
         match self.get_document_symbols(path) {
             Ok(symbols) => {
                 self.state
