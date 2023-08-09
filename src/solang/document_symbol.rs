@@ -123,7 +123,23 @@ impl ToDocumentSymbol for StructDefinition {
 
 impl ToDocumentSymbol for FunctionDefinition {
     fn to_document_symbol(&self, _source: &Source) -> DocumentSymbol {
+        let ident_to_string = |name: &Option<Identifier>, default: &str| {
+            name.as_ref()
+                .map_or(default.to_string(), |name| name.name.clone())
+        };
+
+        let name = match self.ty {
+            FunctionTy::Constructor => "constructor".to_string(),
+            FunctionTy::Function => ident_to_string(&self.name, "<function>"),
+            FunctionTy::Fallback => "fallback".to_string(),
+            FunctionTy::Receive => "receive".to_string(),
+            FunctionTy::Modifier => {
+                format!("modifier {}", ident_to_string(&self.name, "<modifier>"))
+            }
+        };
+
         DocumentSymbolBuilder::new_with_identifier(&self.name, "<function>", SymbolKind::FUNCTION)
+            .name(name)
             .build()
     }
 }
