@@ -326,7 +326,10 @@ impl BackendState {
     #[instrument(skip_all)]
     async fn on_solc_diagnostics_update(&self, root: &PathBuf) {
         let config = crate::utils::get_foundry_config_with_path(root);
-        let error_codes_to_ignore = config.ok().map(|c| c.ignored_error_codes).unwrap_or(vec![]);
+        let error_codes_to_ignore = config
+            .ok()
+            .map(|c| c.ignored_error_codes)
+            .unwrap_or_default();
         let grouped = self.get_grouped_diagnostics_by_file(root);
         let mut join_set = JoinSet::new();
         let grouped_keys: HashSet<Url> = grouped.keys().cloned().collect();

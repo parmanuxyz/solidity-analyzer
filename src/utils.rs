@@ -1,5 +1,5 @@
 use std::default::Default;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use foundry_config::{figment::Figment, Config, RootPath};
 use tower_lsp::lsp_types::{Diagnostic, Position, Range, Url};
@@ -36,7 +36,7 @@ pub fn get_foundry_config(url: &Url) -> Result<Config, BackendError> {
     get_foundry_config_with_path(&path)
 }
 
-pub fn get_root_path_from_path(path: &PathBuf) -> anyhow::Result<PathBuf> {
+pub fn get_root_path_from_path(path: &Path) -> anyhow::Result<PathBuf> {
     let dir = path
         .parent()
         .ok_or(BackendError::OptionUnwrap)?
