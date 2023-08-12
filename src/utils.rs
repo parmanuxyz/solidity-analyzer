@@ -17,12 +17,10 @@ pub fn url_to_path(url: &Url) -> Result<PathBuf, BackendError> {
     }
 }
 
-#[instrument(skip_all)]
-pub fn get_foundry_config(url: &Url) -> Result<Config, BackendError> {
-    let path = url_to_path(url)?;
+pub fn get_foundry_config_with_path(path: &PathBuf) -> Result<Config, BackendError> {
     let parent = path.parent().ok_or(BackendError::OptionUnwrap)?;
-    let root_path = get_root_path(url).or(Ok(parent.to_path_buf()))?;
-    debug!(root_path = ?root_path.to_string_lossy(), url = url.to_string(), "root path found");
+    let root_path = get_root_path_from_path(path).or(Ok(parent.to_path_buf()))?;
+    debug!(root_path = ?root_path.to_string_lossy(), path = format!("{:?}", path), "root path found");
 
     let config = Config::from_provider(Into::<Figment>::into(Config {
         __root: RootPath(root_path),
@@ -32,13 +30,23 @@ pub fn get_foundry_config(url: &Url) -> Result<Config, BackendError> {
     Ok(config)
 }
 
-pub fn get_root_path(path: &Url) -> anyhow::Result<PathBuf> {
-    let path = url_to_path(path)?;
+#[instrument(skip_all)]
+pub fn get_foundry_config(url: &Url) -> Result<Config, BackendError> {
+    let path = url_to_path(url)?;
+    get_foundry_config_with_path(&path)
+}
+
+pub fn get_root_path_from_path(path: &PathBuf) -> anyhow::Result<PathBuf> {
     let dir = path
         .parent()
         .ok_or(BackendError::OptionUnwrap)?
         .to_path_buf();
     Ok(foundry_config::find_project_root_path(Some(&dir))?)
+}
+
+pub fn get_root_path(path: &Url) -> anyhow::Result<PathBuf> {
+    let path = url_to_path(path)?;
+    get_root_path_from_path(&path)
 }
 
 #[macro_export]
