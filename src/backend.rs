@@ -19,8 +19,10 @@ use solang_parser::pt::SourceUnitPart;
 use tokio::task::JoinSet;
 use tower_lsp::{
     lsp_types::{
-        ClientCapabilities, Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity,
-        DocumentSymbol, Location, NumberOrString, Position, Range, TextEdit, Url,
+        notification::Progress, request::WorkDoneProgressCreate, ClientCapabilities, Diagnostic,
+        DiagnosticRelatedInformation, DiagnosticSeverity, DocumentSymbol, Location, NumberOrString,
+        Position, ProgressParams, ProgressParamsValue, ProgressToken, Range, TextEdit, Url,
+        WorkDoneProgress, WorkDoneProgressBegin, WorkDoneProgressCreateParams, WorkDoneProgressEnd,
     },
     Client,
 };
@@ -55,6 +57,7 @@ pub struct BackendState {
     pub jobs_receiver: tokio::sync::RwLock<tokio::sync::mpsc::Receiver<Job>>,
     pub diagnostics_pushed_for: tokio::sync::RwLock<HashMap<Url, bool>>,
     pub client: Client,
+    pub progress_id: std::sync::atomic::AtomicU64,
 }
 
 impl BackendState {
@@ -71,6 +74,7 @@ impl BackendState {
             project_compilation_output: Default::default(),
             client,
             diagnostics_pushed_for: Default::default(),
+            progress_id: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -80,6 +84,33 @@ impl BackendState {
             debug!("processing job: {:?}", job);
             match job {
                 Job::ComputeSolcDiagnostics(path) => {
+                    let req_token = ProgressToken::Number(
+                        self.progress_id
+                            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                            as i32,
+                    );
+                    let create_req = self
+                        .client
+                        .send_request::<WorkDoneProgressCreate>(WorkDoneProgressCreateParams {
+                            token: req_token.clone(),
+                        })
+                        .await;
+                    if create_req.is_ok() {
+                        self.client
+                            .send_notification::<Progress>(ProgressParams {
+                                token: req_token.clone(),
+                                value: ProgressParamsValue::WorkDone(WorkDoneProgress::Begin(
+                                    WorkDoneProgressBegin {
+                                        title: "Compiling".to_string(),
+                                        cancellable: None,
+                                        message: None,
+                                        percentage: None,
+                                    },
+                                )),
+                            })
+                            .await;
+                    }
+
                     let compile_result = self.compile_project(&path);
                     debug!(res = ?compile_result, "compiling finished");
                     if compile_result.is_ok() {
@@ -99,6 +130,18 @@ impl BackendState {
                         );
                         self.solc_diagnostics.insert(root.clone(), diagnostics);
                         self.on_solc_diagnostics_update(&root).await;
+                    }
+                    if create_req.is_ok() {
+                        self.client
+                            .send_notification::<Progress>(ProgressParams {
+                                token: req_token,
+                                value: ProgressParamsValue::WorkDone(WorkDoneProgress::End(
+                                    WorkDoneProgressEnd {
+                                        message: Some("Compiling finished".to_string()),
+                                    },
+                                )),
+                            })
+                            .await
                     }
                 }
             }
