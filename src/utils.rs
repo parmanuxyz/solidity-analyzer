@@ -18,8 +18,7 @@ pub fn url_to_path(url: &Url) -> Result<PathBuf, BackendError> {
 }
 
 pub fn get_foundry_config_with_path(path: &PathBuf) -> Result<Config, BackendError> {
-    let parent = path.parent().ok_or(BackendError::OptionUnwrap)?;
-    let root_path = get_root_path_from_path(path).or(Ok(parent.to_path_buf()))?;
+    let root_path = get_root_path_from_path(path).or(Ok(path.clone()))?;
     debug!(root_path = ?root_path.to_string_lossy(), path = format!("{:?}", path), "root path found");
 
     let config = Config::from_provider(Into::<Figment>::into(Config {
