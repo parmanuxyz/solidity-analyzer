@@ -325,6 +325,8 @@ impl BackendState {
 
     #[instrument(skip_all)]
     async fn on_solc_diagnostics_update(&self, root: &PathBuf) {
+        let config = crate::utils::get_foundry_config_with_path(root);
+        let error_codes_to_ignore = config.ok().map(|c| c.ignored_error_codes).unwrap_or(vec![]);
         let grouped = self.get_grouped_diagnostics_by_file(root);
         let mut join_set = JoinSet::new();
         let grouped_keys: HashSet<Url> = grouped.keys().cloned().collect();
@@ -371,6 +373,21 @@ impl BackendState {
                 "publishing diagnostics for"
             );
             diagnostics_pushed_for.insert(uri.clone(), true);
+            let diags = diags
+                .into_iter()
+                .filter(|diag| {
+                    diag.code.is_none() || {
+                        if let NumberOrString::Number(number) =
+                            diag.code.as_ref().expect("shouldn't be happening")
+                        {
+                            !error_codes_to_ignore
+                                .contains(&foundry_config::SolidityErrorCode::from(*number as u64))
+                        } else {
+                            true
+                        }
+                    }
+                })
+                .collect();
             // publish diagnostics of all files async
             join_set.spawn(async move {
                 client_clone
