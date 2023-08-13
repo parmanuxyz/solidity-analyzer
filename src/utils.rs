@@ -36,11 +36,9 @@ pub fn get_foundry_config(url: &Url) -> Result<Config, BackendError> {
 }
 
 pub fn get_root_path_from_path(path: &Path) -> anyhow::Result<PathBuf> {
-    let dir = path
-        .parent()
-        .ok_or(BackendError::OptionUnwrap)?
-        .to_path_buf();
-    Ok(foundry_config::find_project_root_path(Some(&dir))?)
+    Ok(foundry_config::find_project_root_path(Some(
+        &path.to_path_buf(),
+    ))?)
 }
 
 pub fn get_root_path(path: &Url) -> anyhow::Result<PathBuf> {
