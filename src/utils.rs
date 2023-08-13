@@ -36,14 +36,21 @@ pub fn get_foundry_config(url: &Url) -> Result<Config, BackendError> {
 }
 
 pub fn get_root_path_from_path(path: &Path) -> anyhow::Result<PathBuf> {
-    Ok(foundry_config::find_project_root_path(Some(
-        &path.to_path_buf(),
-    ))?)
+    let dirname = dir(path);
+    Ok(foundry_config::find_project_root_path(dirname.as_ref())?)
 }
 
 pub fn get_root_path(path: &Url) -> anyhow::Result<PathBuf> {
     let path = url_to_path(path)?;
     get_root_path_from_path(&path)
+}
+
+fn dir(path: &Path) -> Option<PathBuf> {
+    if path.is_file() {
+        path.parent().map(|p| p.to_path_buf())
+    } else {
+        Some(path.to_path_buf())
+    }
 }
 
 #[macro_export]
@@ -117,5 +124,18 @@ mod tests {
         let url = Url::parse("https:///home/user/file.txt").unwrap();
         let path = url_to_path(&url).err().unwrap();
         assert!(matches!(path, BackendError::UnprocessableUrlError));
+    }
+
+    #[test]
+    fn test_get_root_path_from_path() {
+        let cwd = std::env::current_dir().unwrap();
+        let self_path = file!();
+        let path = cwd.join(self_path);
+        let parent = path.parent().unwrap().parent().unwrap();
+        let root = get_root_path_from_path(&path).unwrap();
+        assert_eq!(root, parent.to_path_buf());
+
+        let root2 = get_root_path_from_path(parent).unwrap();
+        assert_eq!(root2, parent.to_path_buf());
     }
 }

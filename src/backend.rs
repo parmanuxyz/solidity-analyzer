@@ -371,7 +371,11 @@ impl BackendState {
         let config = crate::utils::get_foundry_config_with_path(root);
         let error_codes_to_ignore = config
             .ok()
-            .map(|c| c.ignored_error_codes)
+            .map(|c| {
+                let error_codes = c.ignored_error_codes;
+                tracing::info!(root_path = ?c.__root.0, error_codes_to_ignore = ?error_codes, "error codes to ignore");
+                error_codes
+            })
             .unwrap_or_default();
         let grouped = self.get_grouped_diagnostics_by_file(root);
         let mut join_set = JoinSet::new();
