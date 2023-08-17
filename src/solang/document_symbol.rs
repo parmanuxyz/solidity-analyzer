@@ -281,7 +281,7 @@ impl ToDocumentSymbol for ContractDefinition {
             })
             .collect::<Vec<String>>()
             .join(", ");
-        if inherits.len() > 0 {
+        if !inherits.is_empty() {
             inherits = format!("inherits {inherits}");
         }
         let detail = format!("{} {}", detail, inherits);
