@@ -138,8 +138,47 @@ impl ToDocumentSymbol for FunctionDefinition {
             }
         };
 
+        let mutability = self
+            .attributes
+            .iter()
+            .filter_map(|attr| match &attr {
+                FunctionAttribute::Mutability(Mutability::View(_)) => Some("view"),
+                FunctionAttribute::Mutability(Mutability::Pure(_)) => Some("pure"),
+                _ => None,
+            })
+            .collect::<Vec<&str>>()
+            .first()
+            .map(|x| x.to_string());
+
+        let visibility = self
+            .attributes
+            .iter()
+            .filter_map(|attr| match &attr {
+                FunctionAttribute::Visibility(Visibility::External(_)) => Some("external"),
+                FunctionAttribute::Visibility(Visibility::Public(_)) => Some("public"),
+                FunctionAttribute::Visibility(Visibility::Internal(_)) => Some("internal"),
+                FunctionAttribute::Visibility(Visibility::Private(_)) => Some("private"),
+                _ => None,
+            })
+            .collect::<Vec<&str>>()
+            .first()
+            .map(|x| x.to_string());
+
+        let payable = self
+            .attributes
+            .iter()
+            .find(|attr| matches!(attr, FunctionAttribute::Mutability(Mutability::Payable(_))))
+            .map(|_| "payable".to_string());
+
+        let detail = vec![visibility, payable, mutability]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<String>>()
+            .join(" ");
+
         DocumentSymbolBuilder::new_with_identifier(&self.name, "<function>", SymbolKind::FUNCTION)
             .name(name)
+            .detail(detail)
             .build()
     }
 }
