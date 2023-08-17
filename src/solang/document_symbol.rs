@@ -121,6 +121,66 @@ impl ToDocumentSymbol for StructDefinition {
     }
 }
 
+#[derive(Clone)]
+enum MutabilitySubset {
+    Pure,
+    View,
+}
+
+impl std::fmt::Display for MutabilitySubset {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MutabilitySubset::Pure => write!(f, "pure"),
+            MutabilitySubset::View => write!(f, "view"),
+        }
+    }
+}
+
+trait FunctionDefinitionHelpers {
+    fn mutability(&self) -> Option<MutabilitySubset>;
+    fn visibility(&self) -> Option<Visibility>;
+    fn is_payable(&self) -> bool;
+}
+
+impl FunctionDefinitionHelpers for FunctionDefinition {
+    fn mutability(&self) -> Option<MutabilitySubset> {
+        self.attributes
+            .iter()
+            .filter_map(|attr| match &attr {
+                FunctionAttribute::Mutability(Mutability::View(_)) => Some(MutabilitySubset::View),
+                FunctionAttribute::Mutability(Mutability::Pure(_)) => Some(MutabilitySubset::Pure),
+                _ => None,
+            })
+            .collect::<Vec<MutabilitySubset>>()
+            .first()
+            .cloned()
+    }
+
+    fn visibility(&self) -> Option<Visibility> {
+        self.attributes
+            .iter()
+            .filter_map(|attr| match &attr {
+                FunctionAttribute::Visibility(visibility) => Some(visibility.clone()),
+                _ => None,
+            })
+            .collect::<Vec<Visibility>>()
+            .first()
+            .cloned()
+    }
+
+    fn is_payable(&self) -> bool {
+        self.attributes
+            .iter()
+            .filter_map(|attr| match &attr {
+                FunctionAttribute::Mutability(Mutability::Payable(_)) => Some(true),
+                _ => None,
+            })
+            .collect::<Vec<bool>>()
+            .first()
+            .is_some()
+    }
+}
+
 impl ToDocumentSymbol for FunctionDefinition {
     fn to_document_symbol(&self, _source: &Source) -> DocumentSymbol {
         let ident_to_string = |name: &Option<Identifier>, default: &str| {
@@ -138,37 +198,9 @@ impl ToDocumentSymbol for FunctionDefinition {
             }
         };
 
-        let mutability = self
-            .attributes
-            .iter()
-            .filter_map(|attr| match &attr {
-                FunctionAttribute::Mutability(Mutability::View(_)) => Some("view"),
-                FunctionAttribute::Mutability(Mutability::Pure(_)) => Some("pure"),
-                _ => None,
-            })
-            .collect::<Vec<&str>>()
-            .first()
-            .map(|x| x.to_string());
-
-        let visibility = self
-            .attributes
-            .iter()
-            .filter_map(|attr| match &attr {
-                FunctionAttribute::Visibility(Visibility::External(_)) => Some("external"),
-                FunctionAttribute::Visibility(Visibility::Public(_)) => Some("public"),
-                FunctionAttribute::Visibility(Visibility::Internal(_)) => Some("internal"),
-                FunctionAttribute::Visibility(Visibility::Private(_)) => Some("private"),
-                _ => None,
-            })
-            .collect::<Vec<&str>>()
-            .first()
-            .map(|x| x.to_string());
-
-        let payable = self
-            .attributes
-            .iter()
-            .find(|attr| matches!(attr, FunctionAttribute::Mutability(Mutability::Payable(_))))
-            .map(|_| "payable".to_string());
+        let mutability = self.mutability().map(|x| x.to_string());
+        let visibility = self.visibility().map(|x| x.to_string());
+        let payable = self.is_payable().then(|| "payable".to_string());
 
         let detail = vec![visibility, payable, mutability]
             .into_iter()
@@ -281,14 +313,78 @@ impl ToDocumentSymbol for ContractDefinition {
             })
             .collect::<Vec<String>>()
             .join(", ");
-        if inherits.len() > 0 {
+        if !inherits.is_empty() {
             inherits = format!("inherits {inherits}");
         }
         let detail = format!("{} {}", detail, inherits);
 
+        // TODO: maybe this should be a config value??
+        let mut parts = self.parts.iter().collect::<Vec<_>>();
+        let p = |parts: &Vec<&ContractPart>| {
+            parts
+                .iter()
+                .filter_map(|x| match x {
+                    ContractPart::FunctionDefinition(f) => Some(
+                        f.name
+                            .as_ref()
+                            .map_or("<function>".to_string(), |x| x.name.clone()),
+                    ),
+                    _ => None,
+                })
+                .collect::<Vec<String>>()
+        };
+        tracing::debug!( a= ?p(&parts), "before sort");
+        parts.sort_by(|a, b| match (a, b) {
+            (ContractPart::FunctionDefinition(a), ContractPart::FunctionDefinition(b)) => {
+                let va = a.visibility();
+                let vb = b.visibility();
+                let visibility_order = match (va, vb) {
+                    (Some(va), Some(vb)) => {
+                        let to_num = |v: Visibility| match v {
+                            Visibility::External(_) => 0,
+                            Visibility::Public(_) => 1,
+                            Visibility::Internal(_) => 2,
+                            Visibility::Private(_) => 3,
+                        };
+                        to_num(va).cmp(&to_num(vb))
+                    }
+                    (_, _) => std::cmp::Ordering::Equal,
+                };
+
+                let ma = a.mutability();
+                let mb = b.mutability();
+                let mutability_order = match (ma, mb) {
+                    (Some(ma), Some(mb)) => match (ma, mb) {
+                        (MutabilitySubset::Pure, MutabilitySubset::Pure)
+                        | (MutabilitySubset::View, MutabilitySubset::View) => {
+                            std::cmp::Ordering::Equal
+                        }
+                        (MutabilitySubset::Pure, MutabilitySubset::View) => {
+                            std::cmp::Ordering::Greater
+                        }
+                        (MutabilitySubset::View, MutabilitySubset::Pure) => {
+                            std::cmp::Ordering::Less
+                        }
+                    },
+                    (Some(_), None) => std::cmp::Ordering::Greater,
+                    (None, Some(_)) => std::cmp::Ordering::Less,
+                    (None, None) => std::cmp::Ordering::Equal,
+                };
+
+                let pa = a.is_payable();
+                let pb = b.is_payable();
+                let payability_ordering = pb.cmp(&pa);
+                visibility_order
+                    .then(mutability_order)
+                    .then(payability_ordering)
+            }
+            _ => std::cmp::Ordering::Equal,
+        });
+        tracing::debug!(a = ?p(&parts), "after sort");
+
         DocumentSymbolBuilder::new_with_identifier(&self.name, "<contract>", kind)
             .children(
-                self.parts
+                parts
                     .iter()
                     .filter_map(|part| part.try_to_document_symbol(source))
                     .collect(),
