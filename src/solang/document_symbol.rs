@@ -84,7 +84,7 @@ impl ToDocumentSymbol for VariableDefinition {
         let mut builder =
             DocumentSymbolBuilder::new_with_identifier(&self.name, "<var>", SymbolKind::VARIABLE);
 
-        if matches!(self.ty, Expression::Type(_, _)) {
+        if matches!(self.ty, Expression::Type(_, _) | Expression::Variable(_)) {
             builder.detail(self.ty.to_string()).build()
         } else {
             builder.build()
@@ -97,7 +97,7 @@ impl ToDocumentSymbol for VariableDeclaration {
         let mut builder =
             DocumentSymbolBuilder::new_with_identifier(&self.name, "<var>", SymbolKind::VARIABLE);
 
-        if matches!(self.ty, Expression::Type(_, _)) {
+        if matches!(self.ty, Expression::Type(_, _) | Expression::Variable(_)) {
             builder.detail(self.ty.to_string()).build()
         } else {
             builder.build()
@@ -262,6 +262,29 @@ impl ToDocumentSymbol for ContractDefinition {
             }
             ContractTy::Interface(_) => SymbolKind::INTERFACE,
         };
+        let detail = match self.ty {
+            ContractTy::Abstract(_) => "abstract",
+            ContractTy::Contract(_) => "contract",
+            ContractTy::Library(_) => "library",
+            ContractTy::Interface(_) => "interface",
+        };
+        let mut inherits = self
+            .base
+            .iter()
+            .map(|base| {
+                base.name
+                    .identifiers
+                    .iter()
+                    .map(|ident| ident.name.clone())
+                    .collect::<Vec<String>>()
+                    .join(", ")
+            })
+            .collect::<Vec<String>>()
+            .join(", ");
+        if inherits.len() > 0 {
+            inherits = format!("inherits {inherits}");
+        }
+        let detail = format!("{} {}", detail, inherits);
 
         DocumentSymbolBuilder::new_with_identifier(&self.name, "<contract>", kind)
             .children(
@@ -270,6 +293,7 @@ impl ToDocumentSymbol for ContractDefinition {
                     .filter_map(|part| part.try_to_document_symbol(source))
                     .collect(),
             )
+            .detail(detail)
             .build()
     }
 }
