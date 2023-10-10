@@ -26,7 +26,7 @@ $ cargo b
 
 Check the [configuration path below](#configuration). Logs are located in `~/solidity-analyzer.log`
 
-## Extension
+## VSCode Extension
 
 Open [`extension.ts`](./client/src/extension.ts) in VSCode and run in debug mode
 with <kbd>F5</kbd>.
@@ -35,6 +35,8 @@ Install the pre-release from VSCode marketplace [here](https://marketplace.visua
 
 ### Configuration
 
+#### VSCode
+
 The extension will try to run the language server from the paths in following order:
 
 1. `solidity-analyzer.languageServerPath` configuration value if it exists
@@ -42,3 +44,28 @@ The extension will try to run the language server from the paths in following or
 3. Will search the folders in `PATH` to see if `solidity-analyzer-ls` exists in any of them. Will run the first entry it'd find.
 4. If it doesn't even exist in the `PATH` it will try `~/bin/solidity-analyzer-ls`.
 5. If found nowhere it'd show an error and exit.
+
+#### neovim
+
+Configure neovim to use solidity-analyzer-ls as follows:
+
+```lua
+local configs = require 'lspconfig.configs'
+local lspconfig = require 'lspconfig'
+
+-- Check if the config is already defined (useful when reloading this file)
+if not configs.solidity_analyer_lsp then
+  configs.solidity_analyzer_lsp = {
+    default_config = {
+      cmd = {vim.fn.expand('$HOME/.cargo/bin/solidity-analyzer-ls')},
+      filetypes = {'solidity'},
+      root_dir = lspconfig.util.root_pattern('foundry.toml') or function(fname)
+        return lspconfig.util.find_git_ancestor(fname)
+      end,
+      settings = {},
+    },
+  }
+end
+
+lspconfig.solidity_analyzer_lsp.setup{}
+```
