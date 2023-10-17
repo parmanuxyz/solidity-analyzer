@@ -1,7 +1,11 @@
 # solidity-analyzer
 
+[![Telegram](https://img.shields.io/badge/Join-Telegram-blue?style=for-the-badge&logo=data:image/svg%2bxml;base64,PHN2ZyBlbmFibGUtYmFja2dyb3VuZD0ibmV3IDAgMCAyNCAyNCIgaGVpZ2h0PSI1MTIiIHZpZXdCb3g9IjAgMCAyNCAyNCIgd2lkdGg9IjUxMiIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJtOS40MTcgMTUuMTgxLS4zOTcgNS41ODRjLjU2OCAwIC44MTQtLjI0NCAxLjEwOS0uNTM3bDIuNjYzLTIuNTQ1IDUuNTE4IDQuMDQxYzEuMDEyLjU2NCAxLjcyNS4yNjcgMS45OTgtLjkzMWwzLjYyMi0xNi45NzIuMDAxLS4wMDFjLjMyMS0xLjQ5Ni0uNTQxLTIuMDgxLTEuNTI3LTEuNzE0bC0yMS4yOSA4LjE1MWMtMS40NTMuNTY0LTEuNDMxIDEuMzc0LS4yNDcgMS43NDFsNS40NDMgMS42OTMgMTIuNjQzLTcuOTExYy41OTUtLjM5NCAxLjEzNi0uMTc2LjY5MS4yMTh6IiBmaWxsPSIjMDM5YmU1Ii8+PC9zdmc+)](https://t.me/+9RBGRK34dyI2OWM0)
+
+
 Goal is to create and provide improved devex over current extensions
 for foundry projects with maybe hardhat support(through foundry) in future.
+
 
 ## Features
 
@@ -26,16 +30,16 @@ $ cargo b
 
 Check the [configuration path below](#configuration). Logs are located in `~/solidity-analyzer.log`
 
-## VSCode Extension
+## VSCode Extension Development/Debug
 
 Open [`extension.ts`](./client/src/extension.ts) in VSCode and run in debug mode
 with <kbd>F5</kbd>.
 
 Install the pre-release from VSCode marketplace [here](https://marketplace.visualstudio.com/items?itemName=parmanu.solidity-analyzer-language-client-prerelease).
 
-### Configuration
+## Configuration
 
-#### VSCode
+### VSCode
 
 The extension will try to run the language server from the paths in following order:
 
@@ -45,7 +49,7 @@ The extension will try to run the language server from the paths in following or
 4. If it doesn't even exist in the `PATH` it will try `~/bin/solidity-analyzer-ls`.
 5. If found nowhere it'd show an error and exit.
 
-#### neovim
+### neovim
 
 Configure neovim to use solidity-analyzer-ls as follows:
 
