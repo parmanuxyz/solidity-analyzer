@@ -260,7 +260,7 @@ impl BackendState {
                         {
                             let path = {
                                 let fpath = root.join(file);
-                                fpath.to_str().map(|p| format!("{}", p))
+                                fpath.to_str().map(|p| p.to_string())
                             };
                             if let Some(path) = path {
                                 let url_string = format!("file://{}", path);
