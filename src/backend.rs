@@ -507,7 +507,7 @@ impl Backend {
             .await;
         let parsed_src = parsed_src?;
         let mut formatted_txt = String::default();
-        forge_fmt::format(&mut formatted_txt).map_err(|_| BackendError::FormatError)?;
+        forge_fmt::format_to(&mut formatted_txt, parsed_src, config.fmt)?;
         let formatted_txt_lines = formatted_txt.lines().collect::<Vec<&str>>();
 
         let diff: TextDiff<'_, '_, '_, str> = TextDiff::from_lines(&file_contents, &formatted_txt);
