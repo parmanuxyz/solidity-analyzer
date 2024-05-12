@@ -29,10 +29,10 @@ pub trait ToDocumentSymbol: CodeLocation {
     fn to_document_symbol_with_loc(&self, source: &Source) -> DocumentSymbol {
         self.with_loc(source, self.to_document_symbol(source))
     }
-    fn try_to_document_symbol_with_loc(&self, source: &Source) -> Option<DocumentSymbol> {
-        self.try_to_document_symbol(source)
-            .map(|document_symbol| self.with_loc(source, document_symbol))
-    }
+    // fn try_to_document_symbol_with_loc(&self, source: &Source) -> Option<DocumentSymbol> {
+    //     self.try_to_document_symbol(source)
+    //         .map(|document_symbol| self.with_loc(source, document_symbol))
+    // }
 }
 
 impl ToDocumentSymbol for Identifier {
