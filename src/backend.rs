@@ -9,9 +9,11 @@ use std::{
 };
 
 use dashmap::DashMap;
-use foundry_config::ethers_solc::{
-    self,
-    artifacts::{SecondarySourceLocation, Severity, SourceLocation},
+use foundry_compilers::{
+    artifacts::{
+        error::SourceLocation, SecondarySourceLocation, Severity, Source as FoundrySource,
+    },
+    project::ProjectCompiler,
     ProjectCompileOutput,
 };
 use similar::{DiffOp, TextDiff};
@@ -171,12 +173,13 @@ impl BackendState {
             debug!(path = key, "patching client owned docs in source");
             sources.insert(
                 key.replace("file://", "").to_string().into(),
-                ethers_solc::artifacts::Source::new(val.text.clone()),
+                FoundrySource::new(val.text.clone()),
             );
         }
 
-        let output = project.svm_compile(sources)?;
+        let output = ProjectCompiler::with_sources(&project, sources)?.compile()?;
         self.project_compilation_output.insert(root_path, output);
+
         Ok(())
     }
 
@@ -504,8 +507,7 @@ impl Backend {
             .await;
         let parsed_src = parsed_src?;
         let mut formatted_txt = String::default();
-        forge_fmt::format(&mut formatted_txt, parsed_src, config.fmt)
-            .map_err(|_| BackendError::FormatError)?;
+        forge_fmt::format(&mut formatted_txt).map_err(|_| BackendError::FormatError)?;
         let formatted_txt_lines = formatted_txt.lines().collect::<Vec<&str>>();
 
         let diff: TextDiff<'_, '_, '_, str> = TextDiff::from_lines(&file_contents, &formatted_txt);
