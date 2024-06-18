@@ -237,7 +237,7 @@ impl BackendState {
                     #[allow(clippy::unwrap_used)]
                     let source_location = err.source_location();
                     let source_location = source_location.as_ref();
-                    let source_location = source_location.unwrap();
+                    let source_location = source_location.expect("source location is none");
                     let path = root.join(&source_location.file);
                     // okay because already checked if is_some
                     #[allow(clippy::unwrap_used)]
