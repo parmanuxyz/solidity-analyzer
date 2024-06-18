@@ -22,7 +22,7 @@ pub fn get_foundry_config_with_path(path: &PathBuf) -> Result<Config, BackendErr
     debug!(root_path = ?root_path.to_string_lossy(), path = format!("{:?}", path), "root path found");
 
     let config = Config::from_provider(Into::<Figment>::into(Config {
-        __root: RootPath(root_path),
+        root: RootPath(root_path),
         ..Default::default()
     }));
     // crate::append_to_file!("/Users/meet/solidity-analyzer.log", "config: {:#?}", config);

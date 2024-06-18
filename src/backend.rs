@@ -13,6 +13,7 @@ use foundry_compilers::{
     artifacts::{
         error::SourceLocation, SecondarySourceLocation, Severity, Source as FoundrySource,
     },
+    compilers::{multi::MultiCompilerError, CompilationError},
     project::ProjectCompiler,
     ProjectCompileOutput,
 };
@@ -193,17 +194,18 @@ impl BackendState {
             .errors
             .iter()
             .filter(|err| {
-                let processable = err.source_location.is_some()
+                let src_location = err.source_location();
+                let processable = src_location.is_some()
                     && (std::path::Path::new(
                         // okay because already checked if is_some
                         #[allow(clippy::unwrap_used)]
-                        &root.join(&err.source_location.as_ref().unwrap().file),
+                        &root.join(&src_location.as_ref().unwrap().file),
                     )
                     .exists())
                     && ({
                         // okay because already checked if is_some
                         #[allow(clippy::unwrap_used)]
-                        root.join(&err.source_location.as_ref().unwrap().file)
+                        root.join(&src_location.as_ref().unwrap().file)
                             .to_str()
                             .is_some()
                     });
@@ -216,108 +218,122 @@ impl BackendState {
 
                 processable
             })
-            .map(|err| -> anyhow::Result<Diagnostic> {
-                let severity = match err.severity {
-                    Severity::Error => Some(DiagnosticSeverity::ERROR),
-                    Severity::Warning => Some(DiagnosticSeverity::WARNING),
-                    Severity::Info => Some(DiagnosticSeverity::INFORMATION),
-                };
-
-                // already checked and filtered out none values
-                #[allow(clippy::unwrap_used)]
-                let source_location = err.source_location.as_ref().unwrap();
-                let path = root.join(&source_location.file);
-                // okay because already checked if is_some
-                #[allow(clippy::unwrap_used)]
-                let url_string = format!("file://{}", path.to_str().unwrap());
-                let url = Url::parse(&url_string)?;
-                let file_contents = self.read_file(url)?;
-                let src = Source::new(file_contents);
-                debug!(err = ?err, "error");
-
-                let source_location_to_range =
-                    |src: &Source, source_location: &SourceLocation| -> anyhow::Result<Range> {
-                        let index_to_position = |index| -> anyhow::Result<Position> {
-                            if index > 0 {
-                                Ok(src.byte_index_to_position(index as usize)?)
-                            } else {
-                                Ok(Position::default())
-                            }
-                        };
-                        Ok(Range {
-                            start: index_to_position(source_location.start)?,
-                            end: index_to_position(source_location.end)?,
-                        })
+            .filter_map(|err| {
+                if let MultiCompilerError::Solc(err) = err {
+                    Some(err)
+                } else {
+                    None
+                }
+            })
+            .map(
+                |err: &foundry_compilers::artifacts::Error| -> anyhow::Result<Diagnostic> {
+                    let severity = match err.severity() {
+                        Severity::Error => Some(DiagnosticSeverity::ERROR),
+                        Severity::Warning => Some(DiagnosticSeverity::WARNING),
+                        Severity::Info => Some(DiagnosticSeverity::INFORMATION),
                     };
 
-                let related_informations = err
-                    .secondary_source_locations
-                    .iter()
-                    .filter_map(|secondary_loc| {
-                        if let SecondarySourceLocation {
-                            start: Some(start),
-                            end: Some(end),
-                            file: Some(file),
-                            message: Some(message),
-                        } = secondary_loc
-                        {
-                            let path = {
-                                let fpath = root.join(file);
-                                fpath.to_str().map(|p| p.to_string())
+                    // already checked and filtered out none values
+                    #[allow(clippy::unwrap_used)]
+                    let source_location = err.source_location();
+                    let source_location = source_location.as_ref();
+                    let source_location = source_location.unwrap();
+                    let path = root.join(&source_location.file);
+                    // okay because already checked if is_some
+                    #[allow(clippy::unwrap_used)]
+                    let url_string = format!("file://{}", path.to_str().unwrap());
+                    let url = Url::parse(&url_string)?;
+                    let file_contents = self.read_file(url)?;
+                    let src = Source::new(file_contents);
+                    debug!(err = ?err, "error");
+
+                    let source_location_to_range =
+                        |src: &Source, source_location: &SourceLocation| -> anyhow::Result<Range> {
+                            let index_to_position = |index| -> anyhow::Result<Position> {
+                                if index > 0 {
+                                    Ok(src.byte_index_to_position(index as usize)?)
+                                } else {
+                                    Ok(Position::default())
+                                }
                             };
-                            if let Some(path) = path {
-                                let url_string = format!("file://{}", path);
-                                if let Ok(url) = Url::parse(&url_string) {
-                                    if let Ok(file_contents) = self.read_file(url.clone()) {
-                                        let src = Source::new(file_contents);
-                                        debug!(err = ?err, "error");
-                                        if let Ok(range) = source_location_to_range(
-                                            &src,
-                                            &SourceLocation {
-                                                file: "".to_string(),
-                                                start: *start,
-                                                end: *end,
-                                            },
-                                        ) {
-                                            return Some((url, message.clone(), range));
+                            Ok(Range {
+                                start: index_to_position(source_location.start)?,
+                                end: index_to_position(source_location.end)?,
+                            })
+                        };
+
+                    let related_informations = err
+                        .secondary_source_locations
+                        .iter()
+                        .filter_map(|secondary_loc| {
+                            if let SecondarySourceLocation {
+                                start: Some(start),
+                                end: Some(end),
+                                file: Some(file),
+                                message: Some(message),
+                            } = secondary_loc
+                            {
+                                let path = {
+                                    let fpath = root.join(file);
+                                    fpath.to_str().map(|p| p.to_string())
+                                };
+                                if let Some(path) = path {
+                                    let url_string = format!("file://{}", path);
+                                    if let Ok(url) = Url::parse(&url_string) {
+                                        if let Ok(file_contents) = self.read_file(url.clone()) {
+                                            let src = Source::new(file_contents);
+                                            debug!(err = ?err, "error");
+                                            if let Ok(range) = source_location_to_range(
+                                                &src,
+                                                &SourceLocation {
+                                                    file: "".to_string(),
+                                                    start: *start,
+                                                    end: *end,
+                                                },
+                                            ) {
+                                                return Some((url, message.clone(), range));
+                                            }
                                         }
                                     }
                                 }
                             }
-                        }
 
-                        debug!(
-                            secondary_loc = ?secondary_loc,
-                            "secondary location not processable"
-                        );
-                        None
-                    })
-                    .map(|(file, message, range)| DiagnosticRelatedInformation {
-                        location: Location { uri: file, range },
-                        message,
-                    })
-                    .collect::<Vec<DiagnosticRelatedInformation>>();
+                            debug!(
+                                secondary_loc = ?secondary_loc,
+                                "secondary location not processable"
+                            );
+                            None
+                        })
+                        .map(|(file, message, range)| DiagnosticRelatedInformation {
+                            location: Location { uri: file, range },
+                            message,
+                        })
+                        .collect::<Vec<DiagnosticRelatedInformation>>();
 
-                let primary_diagnostic = Diagnostic {
-                    range: source_location_to_range(&src, source_location)?,
-                    severity,
-                    source: Some("solc".to_string()),
-                    code: err.error_code.map(|x| x as i32).map(NumberOrString::Number),
-                    code_description: None,
-                    message: err.message.clone(),
-                    related_information: if related_informations.is_empty() {
-                        None
-                    } else {
-                        Some(related_informations)
-                    },
-                    tags: None,
-                    data: Some(serde_json::json!({
-                        "url": url_string
-                    })),
-                };
+                    let primary_diagnostic = Diagnostic {
+                        range: source_location_to_range(&src, source_location)?,
+                        severity,
+                        source: Some("solc".to_string()),
+                        code: err
+                            .error_code()
+                            .map(|x| x as i32)
+                            .map(NumberOrString::Number),
+                        code_description: None,
+                        message: err.message.clone(),
+                        related_information: if related_informations.is_empty() {
+                            None
+                        } else {
+                            Some(related_informations)
+                        },
+                        tags: None,
+                        data: Some(serde_json::json!({
+                            "url": url_string
+                        })),
+                    };
 
-                Ok(primary_diagnostic)
-            })
+                    Ok(primary_diagnostic)
+                },
+            )
             .filter_map(|res| {
                 if res.is_err() {
                     error!(err = ?res, "error converting solc error to diagnostic");
@@ -376,7 +392,7 @@ impl BackendState {
             .ok()
             .map(|c| {
                 let error_codes = c.ignored_error_codes;
-                tracing::info!(root_path = ?c.__root.0, error_codes_to_ignore = ?error_codes, "error codes to ignore");
+                tracing::info!(root_path = ?c.root.0, error_codes_to_ignore = ?error_codes, "error codes to ignore");
                 error_codes
             })
             .unwrap_or_default();
