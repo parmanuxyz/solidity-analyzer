@@ -23,9 +23,7 @@ impl LanguageServer for Backend {
                 text_document_sync: Some(TextDocumentSyncCapability::Options(
                     TextDocumentSyncOptions {
                         open_close: Some(true),
-                        // TODO: maybe incremental would be better for perf
-                        // Keeping it simple for now though
-                        change: Some(TextDocumentSyncKind::FULL),
+                        change: Some(TextDocumentSyncKind::INCREMENTAL),
                         ..Default::default()
                     },
                 )),
@@ -72,7 +70,8 @@ impl LanguageServer for Backend {
         for content_change in params.content_changes {
             match content_change.range {
                 Some(range) => {
-                    self.update_file_range(&file_path, range, content_change.text);
+                    self.update_file_range(&file_path, range, content_change.text)
+                        .await;
                 }
                 None => {
                     self.update_file(&file_path, content_change.text).await;

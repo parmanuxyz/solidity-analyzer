@@ -17,6 +17,7 @@ use foundry_compilers::{
     project::ProjectCompiler,
     ProjectCompileOutput,
 };
+use ropey::Rope;
 use similar::{DiffOp, TextDiff};
 use solang_parser::pt::SourceUnitPart;
 use tokio::task::JoinSet;
@@ -354,7 +355,7 @@ impl BackendState {
                 .get(&file_path.to_string())
                 .unwrap()
                 .text
-                .clone());
+                .to_string());
         }
 
         // read from disk if the document is not owned by client
@@ -494,6 +495,8 @@ pub enum BackendError {
     InvalidLocationError,
     #[error("Option unwrap error")]
     OptionUnwrap,
+    #[error("Ropey query error")]
+    RopeyQueryError,
 }
 
 enum FileAction {
@@ -615,8 +618,16 @@ impl Backend {
         self.on_file_change(FileAction::Update, file_path).await;
     }
 
-    pub fn update_file_range(&self, _file_path: &Url, _range: Range, _text: String) {
-        unimplemented!("update_file_range")
+    pub async fn update_file_range(&self, file_path: &Url, range: Range, text: String) {
+        {
+            let mut src = self
+                .state
+                .documents
+                .get_mut(&file_path.to_string())
+                .expect("given file doesnt exist in state");
+            src.update_range(range, text);
+        }
+        self.on_file_change(FileAction::Update, file_path).await;
     }
 
     async fn on_file_change(&self, action: FileAction, path: &Url) {
@@ -732,7 +743,7 @@ impl Backend {
 
 #[derive(Debug)]
 pub struct Source {
-    pub text: String,
+    pub text: Rope,
     pub line_lengths: Vec<usize>,
 }
 
@@ -741,9 +752,18 @@ impl Source {
         let line_lengths = source.as_str().lines().map(|x| x.len()).collect();
 
         Source {
-            text: source,
+            text: Rope::from_str(source.as_str()),
             line_lengths,
         }
+    }
+
+    pub fn update_range(&mut self, range: Range, text: String) {
+        let start = self.text.line_to_char(range.start.line as usize);
+        let start_char_idx = start + (range.start.character as usize);
+        let end = self.text.line_to_char(range.end.line as usize);
+        let end_char_idx = end + (range.end.character as usize);
+        self.text.remove(start_char_idx..end_char_idx);
+        self.text.insert(start_char_idx, text.as_str());
     }
 
     pub fn loc_to_range(
@@ -767,55 +787,23 @@ impl Source {
         &self,
         index: usize,
     ) -> Result<tower_lsp::lsp_types::Position, BackendError> {
-        let mut chars_read = 0;
-        for (i, line_length) in self.line_lengths.iter().enumerate() {
-            let line_number = i;
-            let last_char_pos = chars_read + line_length;
-            let first_char_pos = chars_read;
-            if index >= first_char_pos && index <= last_char_pos {
-                return Ok(tower_lsp::lsp_types::Position {
-                    line: line_number as u32,
-                    character: (index - first_char_pos) as u32,
-                });
-            }
-            chars_read += line_length + 1; // for \n
-        }
-        error!("position not found");
-        Err(BackendError::PositionNotFoundError)
-    }
+        let line_idx = self
+            .text
+            .try_byte_to_line(index)
+            .map_err(|_| BackendError::RopeyQueryError)?;
+        let line_char_idx = self
+            .text
+            .try_line_to_char(line_idx)
+            .map_err(|_| BackendError::RopeyQueryError)?;
+        let char_idx = self
+            .text
+            .try_byte_to_char(index)
+            .map_err(|_| BackendError::RopeyQueryError)?;
 
-    #[allow(dead_code)]
-    fn position_to_byte_index(
-        &self,
-        position: &tower_lsp::lsp_types::Position,
-    ) -> Result<usize, BackendError> {
-        let mut chars_read = 0;
-        for (i, line_length) in self.line_lengths.iter().enumerate() {
-            let line_number = i;
-            let _last_char_pos = chars_read + line_length;
-            let first_char_pos = chars_read;
-            if position.line as usize == line_number {
-                return Ok(first_char_pos + position.character as usize);
-            }
-            chars_read += line_length + 1; // for \n
-        }
-        Err(BackendError::PositionNotFoundError)
-    }
-
-    #[allow(dead_code)]
-    fn get_loc_substring(&self, loc: &solang_parser::pt::Loc) -> String {
-        if let solang_parser::pt::Loc::File(_, start, end) = loc {
-            self.text[*start..*end].to_string()
-        } else {
-            "".to_string()
-        }
-    }
-
-    #[allow(dead_code)]
-    fn get_range_substring(&self, range: &tower_lsp::lsp_types::Range) -> anyhow::Result<String> {
-        let start = self.position_to_byte_index(&range.start)?;
-        let end = self.position_to_byte_index(&range.end)?;
-        Ok(self.text[start..end].to_string())
+        return Ok(tower_lsp::lsp_types::Position {
+            line: line_idx as u32,
+            character: (char_idx - line_char_idx) as u32,
+        });
     }
 }
 
