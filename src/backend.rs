@@ -18,7 +18,6 @@ use foundry_compilers::{
     ProjectCompileOutput,
 };
 use ropey::Rope;
-use similar::{DiffOp, TextDiff};
 use tokio::task::JoinSet;
 use tower_lsp::{
     lsp_types::{
@@ -524,94 +523,13 @@ impl Backend {
     #[instrument(skip_all)]
     pub async fn get_fmt_textedits(&self, file_path: Url) -> anyhow::Result<Option<Vec<TextEdit>>> {
         let config = utils::get_foundry_config(&file_path)?;
-        let mut err = None;
-        let file_contents = self.state.read_file(file_path.clone()).map_err(|_err| {
+        let file_contents = self.state.read_file(file_path.clone()).map_err(|err| {
             debug!(file_path = file_path.to_string(), err = ?err, "read error");
             BackendError::ReadError
         })?;
-        let parsed_src = forge_fmt::parse(&file_contents).map_err(|err_| {
-            err = Some(err_);
-            BackendError::ParseError
-        });
-        self.client
-            .log_message(
-                tower_lsp::lsp_types::MessageType::ERROR,
-                format!("error on parse: {:?}", err),
-            )
-            .await;
-        let parsed_src = parsed_src?;
-        let mut formatted_txt = String::default();
-        forge_fmt::format_to(&mut formatted_txt, parsed_src, config.fmt)?;
-        let formatted_txt_lines = formatted_txt.lines().collect::<Vec<&str>>();
-
-        let diff: TextDiff<'_, '_, '_, str> = TextDiff::from_lines(&file_contents, &formatted_txt);
-        let text_edits = diff
-            .ops()
-            .iter()
-            .map(|diff_op| match diff_op {
-                DiffOp::Insert {
-                    old_index,
-                    new_index,
-                    new_len,
-                } => {
-                    let to_add = &formatted_txt_lines[*new_index..(*new_index + *new_len)];
-                    Some(TextEdit {
-                        range: Range {
-                            start: Position {
-                                line: *old_index as u32,
-                                character: 0,
-                            },
-                            end: Position {
-                                line: *old_index as u32,
-                                character: 0,
-                            },
-                        },
-                        new_text: to_add.join("\n"),
-                    })
-                }
-                DiffOp::Delete {
-                    old_index,
-                    old_len,
-                    new_index: _,
-                } => Some(TextEdit {
-                    range: Range {
-                        start: Position {
-                            line: *old_index as u32,
-                            character: 0,
-                        },
-                        end: Position {
-                            line: (*old_index + *old_len) as u32,
-                            character: 0,
-                        },
-                    },
-                    new_text: "".to_string(),
-                }),
-                DiffOp::Replace {
-                    old_index,
-                    old_len,
-                    new_index,
-                    new_len,
-                } => {
-                    let to_add = &formatted_txt_lines[*new_index..(*new_index + *new_len)];
-                    Some(TextEdit {
-                        range: Range {
-                            start: Position {
-                                line: *old_index as u32,
-                                character: 0,
-                            },
-                            end: Position {
-                                line: (*old_index + *old_len - 1) as u32,
-                                character: u32::MAX,
-                            },
-                        },
-                        new_text: to_add.join("\n"),
-                    })
-                }
-                _ => None,
-            })
-            .filter(|x| x.is_some())
-            .collect();
-        Ok(text_edits)
+        Ok(Some(
+            crate::features::fmt::fmt(file_contents, config).await?,
+        ))
     }
 
     pub async fn add_file(&self, file_path: &Url, file_contents: String) {
