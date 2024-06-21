@@ -662,12 +662,6 @@ impl Backend {
                 .expect("given file doesnt exist in state");
             let edit = src.change_range_to_input_edit(&range, text.as_str());
 
-            let write_file = |tree: &tree_sitter::Tree| {
-                let file = std::fs::File::create("/tmp/currently_parsed_tree.dot");
-                if file.is_ok() {
-                    tree.print_dot_graph(&file.unwrap())
-                }
-            };
             let new_tree = {
                 let mut old_tree = self
                     .state
@@ -679,7 +673,13 @@ impl Backend {
                     .parse(src.text.to_string(), Some(&old_tree))
                     .expect("error parsing new tree")
             };
-            write_file(&new_tree);
+            // let write_file = |tree: &tree_sitter::Tree| {
+            //     let file = std::fs::File::create("/tmp/currently_parsed_tree.dot");
+            //     if let Ok(file) = file {
+            //         tree.print_dot_graph(&file);
+            //     }
+            // };
+            // write_file(&new_tree);
             self.state.trees.insert(file_path.to_string(), new_tree);
             // *old_tree = new_tree;
             // std::fs::File::open("/tmp/currently_parsed_tree.dot")
@@ -710,13 +710,11 @@ impl Backend {
 
     pub async fn update_document_symbols(&self, path: &Url) -> bool {
         let tree = self.state.trees.get(&path.to_string());
-        if tree.is_some() {
-            let tree = tree.unwrap();
+        if let Some(tree) = tree {
             let mut cursor = tree.walk();
 
             let src = self.state.read_file(path.clone());
-            if src.is_ok() {
-                let src = src.unwrap();
+            if let Ok(src) = src {
                 let symbols = crate::features::document_symbols::get_document_symbols(
                     &mut cursor,
                     src.as_bytes(),
@@ -851,6 +849,7 @@ mod tests {
     mod source_tests {
         use super::*;
 
+        #[allow(dead_code)]
         fn source_example_1() -> String {
             r#"contract flipper {
     bool private value;

@@ -93,9 +93,9 @@ fn get_node_field(
     node_name: &str,
 ) -> String {
     node.child_by_field_name(field_name)
-        .expect(format!("field name not found on {}", node_name).as_str())
+        .unwrap_or_else(|| panic!("field name not found on {}", node_name))
         .utf8_text(src)
-        .expect("error getting text for node")
+        .unwrap_or_else(|_| panic!("error getting text for node"))
         .to_string()
 }
 
@@ -155,11 +155,7 @@ pub fn get_document_symbols(cursor: &mut TreeCursor, src: &[u8]) -> Vec<Document
     let mut symbols = vec![];
     let needs_restore = if matches!(cursor.node().kind(), "source_file" | "contract_body") {
         tracing::debug!("goto_first_child");
-        if cursor.goto_first_child() {
-            true
-        } else {
-            false
-        }
+        cursor.goto_first_child()
     } else {
         false
     };
@@ -167,8 +163,8 @@ pub fn get_document_symbols(cursor: &mut TreeCursor, src: &[u8]) -> Vec<Document
     loop {
         tracing::debug!("node_kind: {}", cursor.node().kind());
         let symbol = get_document_symbol(cursor, src);
-        if symbol.is_some() {
-            symbols.extend(symbol.unwrap())
+        if let Some(symbol) = symbol {
+            symbols.extend(symbol)
         }
         if !cursor.goto_next_sibling() {
             break;
@@ -179,7 +175,7 @@ pub fn get_document_symbols(cursor: &mut TreeCursor, src: &[u8]) -> Vec<Document
     if needs_restore {
         cursor.goto_parent();
     }
-    return symbols;
+    symbols
 }
 
 mod tests {
