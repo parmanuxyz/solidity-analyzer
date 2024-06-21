@@ -2888,12 +2888,13 @@ dependencies = [
  "ropey",
  "serde_json",
  "similar",
- "solang-parser",
  "thiserror",
  "tokio",
  "tower-lsp",
  "tracing",
  "tracing-subscriber",
+ "tree-sitter",
+ "tree-sitter-solidity",
 ]
 
 [[package]]
@@ -3356,6 +3357,26 @@ dependencies = [
  "tracing",
  "tracing-core",
  "tracing-log",
+]
+
+[[package]]
+name = "tree-sitter"
+version = "0.20.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e747b1f9b7b931ed39a548c1fae149101497de3c1fc8d9e18c62c1a66c683d3d"
+dependencies = [
+ "cc",
+ "regex",
+]
+
+[[package]]
+name = "tree-sitter-solidity"
+version = "1.2.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0aa874a7bde4e3f1ef14f51f34a4a73e6d2a1f44856a6429e7d311ab6a476b3c"
+dependencies = [
+ "cc",
+ "tree-sitter",
 ]
 
 [[package]]
