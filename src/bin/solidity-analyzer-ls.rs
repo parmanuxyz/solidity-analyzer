@@ -1,7 +1,7 @@
-use std::sync::Arc;
-
-use solidity_analyzer::backend::{Backend, BackendState};
+use solidity_analyzer::backend::Backend;
 use tower_lsp::{LspService, Server};
+use tracing::level_filters::LevelFilter;
+use tree_sitter::Parser;
 
 #[tokio::main]
 async fn main() {
@@ -26,18 +26,18 @@ async fn main() {
             )
         })
         .with_env_filter(env_filter)
+        .with_max_level(LevelFilter::DEBUG)
         .finish();
 
     // Set the global subscriber
     tracing::subscriber::set_global_default(subscriber).unwrap();
 
     let (service, socket) = LspService::new(|client| {
-        let client_clone = client.clone();
-        Backend {
-            client,
-            client_capabilities: Default::default(),
-            state: Arc::new(BackendState::new(client_clone)),
-        }
+        let mut parser = Parser::new();
+        parser
+            .set_language(tree_sitter_solidity::language())
+            .expect("Error loading solidity grammar");
+        Backend::new(client)
     });
     Server::new(stdin, stdout, socket).serve(service).await;
 }

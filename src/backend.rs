@@ -5,7 +5,7 @@ use std::{
     io::Read,
     os::unix::prelude::MetadataExt,
     path::PathBuf,
-    sync::OnceLock,
+    sync::{Arc, OnceLock},
 };
 
 use dashmap::DashMap;
@@ -18,8 +18,6 @@ use foundry_compilers::{
     ProjectCompileOutput,
 };
 use ropey::Rope;
-use similar::{DiffOp, TextDiff};
-use solang_parser::pt::SourceUnitPart;
 use tokio::task::JoinSet;
 use tower_lsp::{
     lsp_types::{
@@ -31,10 +29,9 @@ use tower_lsp::{
     Client,
 };
 use tracing::{debug, error, instrument};
+use tree_sitter::{InputEdit, Language, Parser, Point};
 
 use crate::utils;
-#[allow(unused_imports)]
-use crate::{append_to_file, solang::document_symbol::ToDocumentSymbol};
 
 pub enum Job {
     ComputeSolcDiagnostics(Url),
@@ -53,8 +50,8 @@ impl std::fmt::Debug for Job {
 #[derive(Debug)]
 pub struct BackendState {
     pub documents: DashMap<String, Source>,
+    pub trees: DashMap<String, tree_sitter::Tree>,
     pub document_symbols: DashMap<String, Vec<DocumentSymbol>>,
-    pub document_diagnostics: DashMap<String, Vec<solang_parser::diagnostics::Diagnostic>>,
     pub solc_diagnostics: DashMap<PathBuf, Vec<Diagnostic>>,
     pub project_compilation_output: DashMap<PathBuf, ProjectCompileOutput>,
     pub jobs_sender: tokio::sync::mpsc::Sender<Job>,
@@ -72,8 +69,8 @@ impl BackendState {
             jobs_receiver: tokio::sync::RwLock::new(receiver),
             jobs_sender: sender,
             documents: Default::default(),
+            trees: Default::default(),
             document_symbols: Default::default(),
-            document_diagnostics: Default::default(),
             solc_diagnostics: Default::default(),
             project_compilation_output: Default::default(),
             client,
@@ -470,11 +467,11 @@ impl BackendState {
     }
 }
 
-#[derive(Debug)]
 pub struct Backend {
     pub client: Client,
     pub client_capabilities: OnceLock<ClientCapabilities>,
     pub state: std::sync::Arc<BackendState>,
+    language: Language,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -487,8 +484,6 @@ pub enum BackendError {
     ReadError,
     #[error("Unprocessable url error")]
     UnprocessableUrlError,
-    #[error("Solidity parse error")]
-    SolidityParseError(Vec<solang_parser::diagnostics::Diagnostic>),
     #[error("Position not found error")]
     PositionNotFoundError,
     #[error("Invalid location error")]
@@ -506,112 +501,61 @@ enum FileAction {
 }
 
 impl Backend {
+    pub fn new(client: Client) -> Self {
+        let client_clone = client.clone();
+        let language = tree_sitter_solidity::language();
+        Self {
+            client,
+            client_capabilities: Default::default(),
+            state: Arc::new(BackendState::new(client_clone)),
+            language,
+        }
+    }
+
+    pub fn parser(&self) -> Parser {
+        let mut parser = Parser::new();
+        parser
+            .set_language(self.language)
+            .expect("failed to load solidity grammar into tree-sitter parser");
+        parser
+    }
+
     #[instrument(skip_all)]
     pub async fn get_fmt_textedits(&self, file_path: Url) -> anyhow::Result<Option<Vec<TextEdit>>> {
         let config = utils::get_foundry_config(&file_path)?;
-        let mut err = None;
-        let file_contents = self.state.read_file(file_path.clone()).map_err(|_err| {
+        let file_contents = self.state.read_file(file_path.clone()).map_err(|err| {
             debug!(file_path = file_path.to_string(), err = ?err, "read error");
             BackendError::ReadError
         })?;
-        let parsed_src = forge_fmt::parse(&file_contents).map_err(|err_| {
-            err = Some(err_);
-            BackendError::ParseError
-        });
-        self.client
-            .log_message(
-                tower_lsp::lsp_types::MessageType::ERROR,
-                format!("error on parse: {:?}", err),
-            )
-            .await;
-        let parsed_src = parsed_src?;
-        let mut formatted_txt = String::default();
-        forge_fmt::format_to(&mut formatted_txt, parsed_src, config.fmt)?;
-        let formatted_txt_lines = formatted_txt.lines().collect::<Vec<&str>>();
-
-        let diff: TextDiff<'_, '_, '_, str> = TextDiff::from_lines(&file_contents, &formatted_txt);
-        let text_edits = diff
-            .ops()
-            .iter()
-            .map(|diff_op| match diff_op {
-                DiffOp::Insert {
-                    old_index,
-                    new_index,
-                    new_len,
-                } => {
-                    let to_add = &formatted_txt_lines[*new_index..(*new_index + *new_len)];
-                    Some(TextEdit {
-                        range: Range {
-                            start: Position {
-                                line: *old_index as u32,
-                                character: 0,
-                            },
-                            end: Position {
-                                line: *old_index as u32,
-                                character: 0,
-                            },
-                        },
-                        new_text: to_add.join("\n"),
-                    })
-                }
-                DiffOp::Delete {
-                    old_index,
-                    old_len,
-                    new_index: _,
-                } => Some(TextEdit {
-                    range: Range {
-                        start: Position {
-                            line: *old_index as u32,
-                            character: 0,
-                        },
-                        end: Position {
-                            line: (*old_index + *old_len) as u32,
-                            character: 0,
-                        },
-                    },
-                    new_text: "".to_string(),
-                }),
-                DiffOp::Replace {
-                    old_index,
-                    old_len,
-                    new_index,
-                    new_len,
-                } => {
-                    let to_add = &formatted_txt_lines[*new_index..(*new_index + *new_len)];
-                    Some(TextEdit {
-                        range: Range {
-                            start: Position {
-                                line: *old_index as u32,
-                                character: 0,
-                            },
-                            end: Position {
-                                line: (*old_index + *old_len - 1) as u32,
-                                character: u32::MAX,
-                            },
-                        },
-                        new_text: to_add.join("\n"),
-                    })
-                }
-                _ => None,
-            })
-            .filter(|x| x.is_some())
-            .collect();
-        Ok(text_edits)
+        Ok(Some(
+            crate::features::fmt::fmt(file_contents, config).await?,
+        ))
     }
 
     pub async fn add_file(&self, file_path: &Url, file_contents: String) {
+        let tree = self
+            .parser()
+            .parse(&file_contents, None)
+            .expect("error parsing the file");
         self.state
             .documents
             .insert(file_path.to_string(), Source::new(file_contents));
+        self.state.trees.insert(file_path.to_string(), tree);
         self.on_file_change(FileAction::Open, file_path).await;
     }
 
     pub async fn remove_file(&self, file_path: &Url) {
         self.state.documents.remove(&file_path.to_string());
+        self.state.trees.remove(&file_path.to_string());
         self.on_file_change(FileAction::Close, file_path).await;
     }
 
     pub async fn update_file(&self, file_path: &Url, file_contents: String) {
+        let tree = self
+            .parser()
+            .parse(&file_contents, None)
+            .expect("error parsing the file");
+        self.state.trees.insert(file_path.to_string(), tree);
         self.state
             .documents
             .insert(file_path.to_string(), Source::new(file_contents));
@@ -625,15 +569,50 @@ impl Backend {
                 .documents
                 .get_mut(&file_path.to_string())
                 .expect("given file doesnt exist in state");
-            src.update_range(range, text);
+            src.update_range(&range, text.as_str());
+            debug!("updated file with incremental change");
         }
+        {
+            let src = &self
+                .state
+                .documents
+                .get(&file_path.to_string())
+                .expect("given file doesnt exist in state");
+            let edit = src.change_range_to_input_edit(&range, text.as_str());
+
+            let new_tree = {
+                let mut old_tree = self
+                    .state
+                    .trees
+                    .get_mut(&file_path.to_string())
+                    .expect("given file tree doesnt exist in state");
+                old_tree.edit(&edit);
+                self.parser()
+                    .parse(src.text.to_string(), Some(&old_tree))
+                    .expect("error parsing new tree")
+            };
+            // let write_file = |tree: &tree_sitter::Tree| {
+            //     let file = std::fs::File::create("/tmp/currently_parsed_tree.dot");
+            //     if let Ok(file) = file {
+            //         tree.print_dot_graph(&file);
+            //     }
+            // };
+            // write_file(&new_tree);
+            self.state.trees.insert(file_path.to_string(), new_tree);
+            // *old_tree = new_tree;
+            // std::fs::File::open("/tmp/currently_parsed_tree.dot")
+            //     .map(|fd| old_tree.print_dot_graph(&fd))
+            //     .map_err(|err| debug!(err =?err, "an error occurred"));
+
+            debug!("finished parsing the tree with edits");
+        }
+
         self.on_file_change(FileAction::Update, file_path).await;
     }
 
     async fn on_file_change(&self, action: FileAction, path: &Url) {
         if let FileAction::Update = action {
             self.state.document_symbols.remove(&path.to_string());
-            self.state.document_diagnostics.remove(&path.to_string());
         }
 
         self.update_document_symbols(path).await;
@@ -648,96 +627,23 @@ impl Backend {
     }
 
     pub async fn update_document_symbols(&self, path: &Url) -> bool {
-        match self.get_document_symbols(path) {
-            Ok(symbols) => {
+        let tree = self.state.trees.get(&path.to_string());
+        if let Some(tree) = tree {
+            let mut cursor = tree.walk();
+
+            let src = self.state.read_file(path.clone());
+            if let Ok(src) = src {
+                let symbols = crate::features::document_symbols::get_document_symbols(
+                    &mut cursor,
+                    src.as_bytes(),
+                );
                 self.state
                     .document_symbols
                     .insert(path.to_string(), symbols);
-                self.state.document_diagnostics.remove(&path.to_string());
-                self.on_document_diagnostic_update(path).await;
-                true
-            }
-            Err(error) => {
-                if let BackendError::SolidityParseError(diagnostics) = error {
-                    self.state
-                        .document_diagnostics
-                        .insert(path.to_string(), diagnostics);
-                    self.on_document_diagnostic_update(path).await;
-                }
-                false
+                return true;
             }
         }
-    }
-
-    async fn on_document_diagnostic_update(&self, _path: &Url) {
-        // if let Some(diagnostics) = self.document_diagnostics.get(&path.to_string()) {
-        // let diags = diagnostics
-        //     .iter()
-        //     .map(|diagnostic| {
-        //         // let range = diagnostic.range.clone();
-        //         tower_lsp::lsp_types::Diagnostic {
-        //             range: Default::default(),
-        //             severity: Some(tower_lsp::lsp_types::DiagnosticSeverity::ERROR),
-        //             code: None,
-        //             code_description: None,
-        //             source: Some("solang".to_string()),
-        //             message: diagnostic.message.clone(),
-        //             related_information: None,
-        //             tags: None,
-        //             data: None,
-        //         }
-        //     })
-        //     .collect();
-
-        // self.client
-        //     .publish_diagnostics(path.clone(), diags, None)
-        //     .await;
-        // }
-    }
-
-    pub fn get_document_symbols(
-        &self,
-        file_path: &Url,
-    ) -> Result<Vec<DocumentSymbol>, BackendError> {
-        let file_contents = self
-            .state
-            .read_file(file_path.clone())
-            .map_err(|_| BackendError::ReadError)?;
-        let (source_unit, _comments) =
-            solang_parser::parse(&file_contents, 0).map_err(BackendError::SolidityParseError)?;
-        let source = Source::new(file_contents);
-
-        Ok(source_unit
-            .0
-            .iter()
-            .filter_map(|part| match part {
-                SourceUnitPart::ContractDefinition(contract) => {
-                    Some(contract.to_document_symbol_with_loc(&source))
-                }
-                SourceUnitPart::EnumDefinition(enum_definition) => {
-                    Some(enum_definition.to_document_symbol_with_loc(&source))
-                }
-                SourceUnitPart::StructDefinition(struct_definition) => {
-                    Some(struct_definition.to_document_symbol_with_loc(&source))
-                }
-                SourceUnitPart::EventDefinition(event_definition) => {
-                    Some(event_definition.to_document_symbol_with_loc(&source))
-                }
-                SourceUnitPart::ErrorDefinition(error_definition) => {
-                    Some(error_definition.to_document_symbol_with_loc(&source))
-                }
-                SourceUnitPart::FunctionDefinition(func_definition) => {
-                    Some(func_definition.to_document_symbol_with_loc(&source))
-                }
-                SourceUnitPart::VariableDefinition(variable_definition) => {
-                    Some(variable_definition.to_document_symbol_with_loc(&source))
-                }
-                SourceUnitPart::TypeDefinition(type_definition) => {
-                    Some(type_definition.to_document_symbol_with_loc(&source))
-                }
-                _ => None,
-            })
-            .collect())
+        false
     }
 }
 
@@ -757,28 +663,66 @@ impl Source {
         }
     }
 
-    pub fn update_range(&mut self, range: Range, text: String) {
-        let start = self.text.line_to_char(range.start.line as usize);
-        let start_char_idx = start + (range.start.character as usize);
-        let end = self.text.line_to_char(range.end.line as usize);
-        let end_char_idx = end + (range.end.character as usize);
-        self.text.remove(start_char_idx..end_char_idx);
-        self.text.insert(start_char_idx, text.as_str());
+    pub fn update_range(&mut self, range: &Range, text: &str) {
+        Self::edit_rope(&mut self.text, range, text);
     }
 
-    pub fn loc_to_range(
-        &self,
-        loc: &solang_parser::pt::Loc,
-    ) -> Result<tower_lsp::lsp_types::Range, BackendError> {
-        if let solang_parser::pt::Loc::File(_, start, end) = loc {
-            let start_pos = self.byte_index_to_position(*start)?;
-            let end_pos = self.byte_index_to_position(*end)?;
-            Ok(tower_lsp::lsp_types::Range {
-                start: start_pos,
-                end: end_pos,
-            })
-        } else {
-            Err(BackendError::InvalidLocationError)
+    pub fn position_to_char(&self, position: Position) -> usize {
+        let start = self.text.line_to_char(position.line as usize);
+
+        start + (position.character as usize)
+    }
+
+    pub fn position_to_byte(&self, position: Position) -> usize {
+        self.text.char_to_byte(self.position_to_char(position))
+    }
+
+    pub fn char_to_byte(&self, char_idx: usize) -> usize {
+        self.text.char_to_byte(char_idx)
+    }
+
+    pub fn edit_rope(rope: &mut Rope, range: &Range, text: &str) {
+        let start = rope.line_to_char(range.start.line as usize);
+        let start_char_idx = start + (range.start.character as usize);
+        let end = rope.line_to_char(range.end.line as usize);
+        let end_char_idx = end + (range.end.character as usize);
+        rope.remove(start_char_idx..end_char_idx);
+        rope.insert(start_char_idx, text);
+    }
+
+    pub fn change_range_to_input_edit(&self, range: &Range, text: &str) -> InputEdit {
+        let start_char = self.position_to_char(range.start);
+        let start_byte = self.char_to_byte(start_char);
+
+        let end_char = self.position_to_char(range.end);
+        let end_byte = self.char_to_byte(end_char);
+
+        let n_char_next = text.len();
+        let new_end_char = start_char + n_char_next;
+
+        let mut next_rope = self.text.clone();
+        Self::edit_rope(&mut next_rope, range, text);
+        let new_end_byte = next_rope.char_to_byte(new_end_char);
+        let new_end_line = next_rope.byte_to_line(new_end_byte);
+        let new_end_line_start_char_idx = next_rope.line_to_char(new_end_line);
+        let new_column = new_end_char - new_end_line_start_char_idx;
+
+        InputEdit {
+            start_byte,
+            old_end_byte: end_byte,
+            new_end_byte,
+            start_position: Point {
+                row: range.start.line as usize,
+                column: range.start.character as usize,
+            },
+            old_end_position: Point {
+                row: range.end.line as usize,
+                column: range.end.character as usize,
+            },
+            new_end_position: Point {
+                row: new_end_line,
+                column: new_column,
+            },
         }
     }
 
@@ -819,14 +763,13 @@ pub fn diagnostic_file_url(diagnostic: &Diagnostic) -> Option<Url> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use solang_parser::pt::*;
 
     mod source_tests {
         use super::*;
 
-        #[test]
-        fn test_byte_index_to_position() {
-            let source: &str = r#"contract flipper {
+        #[allow(dead_code)]
+        fn source_example_1() -> String {
+            r#"contract flipper {
     bool private value;
 
     /// Constructor that initializes the `bool` value to the given `init_value`.
@@ -851,73 +794,54 @@ mod tests {
         returns (uint _a) {
             return 0;
         }
-}"#;
-            let source_bytes = source.as_bytes();
-            let src = Source::new(source.to_string());
-            let lines = source.lines().collect::<Vec<&str>>();
-            let (tree, _comments) = solang_parser::parse(source, 0).unwrap();
+}"#
+            .to_string()
+        }
 
-            let verify_loc_to_range = |loc: &Loc| {
-                if let Loc::File(_, loc_start, loc_end) = loc {
-                    let loc_string = String::from_utf8_lossy(&source_bytes[*loc_start..*loc_end]);
-                    let range = src.loc_to_range(loc).unwrap();
+        #[test]
+        fn test_edit_rope() {
+            let source_1 = r#"
+pragma solidity 0.8.26;
 
-                    let range_string = if range.start.line != range.end.line {
-                        let start_line = lines[range.start.line as usize]
-                            [range.start.character as usize..]
-                            .to_string();
-                        let end_line = lines[range.end.line as usize]
-                            [..range.end.character as usize]
-                            .to_string();
+function pureFunction() pure returns (uint) {
+    return 10;
+}
 
-                        let in_between_start = range.start.line as usize + 1;
-                        let in_between_end = range.end.line as usize - 1;
+contract Contract {
+    uint stateUint = 10;
 
-                        let mut in_between_lines = None;
-                        if in_between_start <= in_between_end {
-                            let to_join = lines[in_between_start..=in_between_end].to_vec();
-                            in_between_lines = Some(to_join.join("\n"));
-                        }
-                        (if let Some(in_between_lines) = in_between_lines {
-                            vec![start_line, in_between_lines, end_line]
-                        } else {
-                            vec![start_line, end_line]
-                        })
-                        .join("\n")
-                    } else {
-                        lines[range.start.line as usize]
-                            [range.start.character as usize..range.end.character as usize]
-                            .to_string()
-                    };
+    constructor() payable {}
+}
+            "#;
 
-                    assert_eq!(
-                        loc_string, range_string,
-                        "loc: {:#?}, range: {:#?}",
-                        loc, range
-                    );
-
-                    println!(
-                        "loc_string: {:?}, range_string: {:?}",
-                        loc_string, range_string
-                    );
-                }
+            let mut rope = Rope::from_str(source_1);
+            let range = Range {
+                start: Position {
+                    line: 0,
+                    character: 0,
+                },
+                end: Position {
+                    line: 0,
+                    character: 1,
+                },
             };
+            Source::edit_rope(&mut rope, &range, "r");
 
-            for part in &tree.0 {
-                if let SourceUnitPart::ContractDefinition(def) = part {
-                    for part in &def.parts {
-                        match part {
-                            ContractPart::VariableDefinition(def) => {
-                                verify_loc_to_range(&def.loc);
-                            }
-                            ContractPart::FunctionDefinition(def) => {
-                                verify_loc_to_range(&def.loc);
-                            }
-                            _ => (),
-                        }
-                    }
-                }
-            }
+            assert_eq!(
+                rope.to_string().as_str(),
+                r#"rpragma solidity 0.8.26;
+
+function pureFunction() pure returns (uint) {
+    return 10;
+}
+
+contract Contract {
+    uint stateUint = 10;
+
+    constructor() payable {}
+}
+            "#
+            )
         }
     }
 }
