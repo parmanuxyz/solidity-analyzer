@@ -28,6 +28,7 @@ impl LanguageServer for Backend {
                     },
                 )),
                 document_symbol_provider: Some(OneOf::Left(true)),
+                position_encoding: Some(PositionEncodingKind::UTF8),
                 ..Default::default()
             },
             ..Default::default()
