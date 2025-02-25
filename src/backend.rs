@@ -393,7 +393,7 @@ impl BackendState {
             .ok()
             .map(|c| {
                 let error_codes = c.ignored_error_codes;
-                tracing::info!(root_path = ?c.root.0, error_codes_to_ignore = ?error_codes, "error codes to ignore");
+                tracing::info!(root_path = ?c.root, error_codes_to_ignore = ?error_codes, "error codes to ignore");
                 error_codes
             })
             .unwrap_or_default();
@@ -497,6 +497,8 @@ pub enum BackendError {
     OptionUnwrap,
     #[error("Ropey query error")]
     RopeyQueryError,
+    #[error("Error reading config")]
+    ConfigError,
 }
 
 enum FileAction {

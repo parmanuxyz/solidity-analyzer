@@ -1,7 +1,7 @@
 use std::default::Default;
 use std::path::{Path, PathBuf};
 
-use foundry_config::{figment::Figment, Config, RootPath};
+use foundry_config::{figment::Figment, Config};
 use tower_lsp::lsp_types::{Diagnostic, Position, Range, Url};
 use tracing::{debug, instrument};
 
@@ -22,9 +22,10 @@ pub fn get_foundry_config_with_path(path: &PathBuf) -> Result<Config, BackendErr
     debug!(root_path = ?root_path.to_string_lossy(), path = format!("{:?}", path), "root path found");
 
     let config = Config::from_provider(Into::<Figment>::into(Config {
-        root: RootPath(root_path),
+        root: root_path,
         ..Default::default()
-    }));
+    }))
+    .map_err(|_| BackendError::ConfigError)?;
     // crate::append_to_file!("/Users/meet/solidity-analyzer.log", "config: {:#?}", config);
     Ok(config)
 }
@@ -36,8 +37,8 @@ pub fn get_foundry_config(url: &Url) -> Result<Config, BackendError> {
 }
 
 pub fn get_root_path_from_path(path: &Path) -> anyhow::Result<PathBuf> {
-    let dirname = dir(path);
-    Ok(foundry_config::find_project_root_path(dirname.as_ref())?)
+    let path = dir(path).ok_or(anyhow::anyhow!("file has no parent??"))?;
+    Ok(foundry_config::find_project_root(Some(path))?)
 }
 
 pub fn get_root_path(path: &Url) -> anyhow::Result<PathBuf> {
@@ -45,11 +46,11 @@ pub fn get_root_path(path: &Url) -> anyhow::Result<PathBuf> {
     get_root_path_from_path(&path)
 }
 
-fn dir(path: &Path) -> Option<PathBuf> {
+fn dir(path: &Path) -> Option<&Path> {
     if path.is_file() {
-        path.parent().map(|p| p.to_path_buf())
+        path.parent()
     } else {
-        Some(path.to_path_buf())
+        Some(path)
     }
 }
 
